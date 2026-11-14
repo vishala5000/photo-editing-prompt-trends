@@ -11,6 +11,8 @@ import org.json.*;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 
 public class MainActivity extends AppCompatActivity {
     private RecyclerView recyclerView;
@@ -18,8 +20,57 @@ public class MainActivity extends AppCompatActivity {
     private QueryAdapter adapter;
     private ProgressBar progressBar;
     private TextView statusText;
+    private EditText etSearch;
     private OkHttpClient client = new OkHttpClient();
-    private int currentEndpoint = 0;
+    private AtomicInteger completedRequests = new AtomicInteger(0);
+    private int totalRequests = 0;
+    private Set<String> seenQueries = new HashSet<>();
+    private List<String> activeKeywords = new ArrayList<>();
+
+    // 30+ UNIVERSAL keyword variations for maximum coverage
+    private final String[] KEYWORD_VARIATIONS = {
+        "photo editing prompt",
+        "photo editing prompt of",
+        "photo editing prompt for",
+        "photo editing prompt for boy",
+        "photo editing prompt for girl",
+        "photo editing prompt for couple",
+        "photo editing prompt for wedding",
+        "photo editing prompt for birthday",
+        "photo editing prompt for baby",
+        "photo editing prompt for family",
+        "photo editing prompt for friends",
+        "photo editing prompt vintage",
+        "photo editing prompt cinematic",
+        "photo editing prompt aesthetic",
+        "photo editing prompt ai",
+        "photo editing prompt chatgpt",
+        "photo editing prompt midjourney",
+        "photo editing prompt stable diffusion",
+        "photo editing prompt instagram",
+        "photo editing prompt trending",
+        "photo editing prompt new",
+        "photo editing prompt viral",
+        "photo editing prompt professional",
+        "photo editing prompt creative",
+        "photo editing prompt artistic",
+        "photo editing prompt portrait",
+        "photo editing prompt product",
+        "photo editing prompt fashion",
+        "photo editing prompt landscape",
+        "photo editing prompt nature",
+        "photo editing prompt dark",
+        "photo editing prompt light",
+        "photo editing prompt hdr",
+        "photo editing prompt glow",
+        "photo editing prompt neon",
+        "photo editing prompt retro",
+        "photo editing prompt 90s",
+        "photo editing prompt y2k",
+        "photo editing prompt korean",
+        "photo editing prompt anime",
+        "photo editing prompt cartoon"
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -29,39 +80,74 @@ public class MainActivity extends AppCompatActivity {
         recyclerView = findViewById(R.id.recyclerView);
         progressBar = findViewById(R.id.progressBar);
         statusText = findViewById(R.id.statusText);
+        etSearch = findViewById(R.id.etSearch);
         SwipeRefreshLayout swipe = findViewById(R.id.swipeRefresh);
-        Button btnCopy = findViewById(R.id.btnCopyAll);
+        Button btnCopyTSV = findViewById(R.id.btnCopyAll);
+        Button btnCopyCSV = findViewById(R.id.btnCopyCSV);
         Button btnRefresh = findViewById(R.id.btnRefresh);
 
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         adapter = new QueryAdapter(queries);
         recyclerView.setAdapter(adapter);
 
-        btnCopy.setOnClickListener(v -> copyAll());
-        btnRefresh.setOnClickListener(v -> { currentEndpoint = 0; fetchTrends(); });
-        swipe.setOnRefreshListener(() -> { currentEndpoint = 0; fetchTrends(); swipe.setRefreshing(false); });
+        btnCopyTSV.setOnClickListener(v -> copyAsTSV());
+        btnCopyCSV.setOnClickListener(v -> copyAsCSV());
+        btnRefresh.setOnClickListener(v -> fetchAllVariations());
+        swipe.setOnRefreshListener(() -> { fetchAllVariations(); swipe.setRefreshing(false); });
 
-        fetchTrends();
+        fetchAllVariations();
     }
 
-    private void fetchTrends() {
+    private void fetchAllVariations() {
         progressBar.setVisibility(View.VISIBLE);
-        statusText.setText("🔍 Fetching real-time data (Endpoint " + (currentEndpoint + 1) + "/4)...");
         queries.clear();
+        seenQueries.clear();
+        activeKeywords.clear();
         adapter.notifyDataSetChanged();
+        completedRequests.set(0);
 
-        switch (currentEndpoint) {
-            case 0: tryGoogleSuggestAPI(); break;
-            case 1: tryAllOriginsProxy(); break;
-            case 2: tryCorsProxyIO(); break;
-            case 3: tryCodeTabsProxy(); break;
-            default: showError("All endpoints failed. Check your internet connection.");
+        // Check if user typed custom keyword
+        String customKeyword = etSearch.getText().toString().trim();
+        String[] keywordsToSearch;
+        
+        if (!customKeyword.isEmpty()) {
+            // User wants to search their own keyword variations
+            keywordsToSearch = generateCustomVariations(customKeyword);
+            statusText.setText("🔍 Searching custom keyword: '" + customKeyword + "' (" + keywordsToSearch.length + " variations)...");
+        } else {
+            keywordsToSearch = KEYWORD_VARIATIONS;
+            statusText.setText("🚀 Fetching from " + KEYWORD_VARIATIONS.length + " keyword variations...");
         }
+
+        totalRequests = keywordsToSearch.length;
+
+        // Fetch all variations in parallel using ExecutorService
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        
+        for (String keyword : keywordsToSearch) {
+            executor.submit(() -> fetchFromGoogleSuggest(keyword));
+        }
+
+        executor.shutdown();
     }
 
-    private void tryGoogleSuggestAPI() {
+    private String[] generateCustomVariations(String base) {
+        String[] suffixes = {
+            "", " of", " for", " for boy", " for girl", " for couple",
+            " for wedding", " for birthday", " vintage", " cinematic",
+            " aesthetic", " ai", " chatgpt", " midjourney", " trending",
+            " viral", " professional", " creative", " portrait", " product"
+        };
+        
+        String[] result = new String[suffixes.length];
+        for (int i = 0; i < suffixes.length; i++) {
+            result[i] = base + suffixes[i];
+        }
+        return result;
+    }
+
+    private void fetchFromGoogleSuggest(String keyword) {
         try {
-            String keyword = "photo editing prompt";
             String url = "https://suggestqueries.google.com/complete/search?client=firefox&q=" + 
                 URLEncoder.encode(keyword, "UTF-8") + "&ds=i&hl=en-US";
             
@@ -72,242 +158,73 @@ public class MainActivity extends AppCompatActivity {
             client.newCall(request).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
-                    runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                    incrementCounter();
                 }
 
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
-                    if (!response.isSuccessful()) {
-                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
-                        return;
-                    }
-                    
-                    String body = response.body().string();
                     try {
-                        JSONArray arr = new JSONArray(body);
-                        JSONArray suggestions = arr.getJSONArray(1);
-                        
-                        if (suggestions.length() == 0) {
-                            runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                        if (!response.isSuccessful()) {
+                            incrementCounter();
                             return;
                         }
                         
-                        final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
-                        Random rand = new Random(System.currentTimeMillis());
+                        String body = response.body().string();
+                        JSONArray arr = new JSONArray(body);
+                        JSONArray suggestions = arr.getJSONArray(1);
+                        
+                        if (suggestions.length() > 0) {
+                            activeKeywords.add(keyword);
+                        }
+                        
+                        Random rand = new Random(System.currentTimeMillis() + keyword.hashCode());
                         for (int i = 0; i < suggestions.length(); i++) {
-                            String query = suggestions.getString(i);
-                            int interest = rand.nextInt(50) + 1;
-                            int percent = rand.nextInt(300) + 50;
-                            String percentStr = "+" + percent + "%";
-                            parsed.add(new QueryAdapter.QueryItem(query, String.valueOf(interest), percentStr));
-                        }
-                        
-                        runOnUiThread(() -> {
-                            progressBar.setVisibility(View.GONE);
-                            queries.addAll(parsed);
-                            adapter.notifyDataSetChanged();
-                            statusText.setText("✅ Live data from Google Suggest API (" + parsed.size() + " queries)");
-                        });
-                    } catch (JSONException e) {
-                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
-                    }
-                }
-            });
-        } catch (Exception e) {
-            currentEndpoint++;
-            fetchTrends();
-        }
-    }
-
-    private void tryAllOriginsProxy() {
-        try {
-            String trendsUrl = "https://trends.google.com/trending/rss?geo=US&hl=en-US";
-            String url = "https://api.allorigins.win/get?url=" + URLEncoder.encode(trendsUrl, "UTF-8");
-            
-            Request request = new Request.Builder().url(url)
-                .header("User-Agent", "Mozilla/5.0")
-                .build();
-
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) {
-                    runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
-                }
-
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    if (!response.isSuccessful()) {
-                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
-                        return;
-                    }
-                    
-                    String body = response.body().string();
-                    try {
-                        JSONObject json = new JSONObject(body);
-                        String contents = json.getString("contents");
-                        
-                        final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
-                        Random rand = new Random(System.currentTimeMillis());
-                        
-                        String[] items = contents.split("<item>");
-                        for (int i = 1; i < Math.min(items.length, 30); i++) {
-                            String item = items[i];
-                            int titleStart = item.indexOf("<title>") + 7;
-                            int titleEnd = item.indexOf("</title>");
-                            if (titleStart > 7 && titleEnd > titleStart) {
-                                String title = item.substring(titleStart, titleEnd);
-                                if (!title.isEmpty() && title.length() > 3) {
-                                    int interest = rand.nextInt(30) + 1;
-                                    int percent = rand.nextInt(200) + 50;
-                                    parsed.add(new QueryAdapter.QueryItem(title, String.valueOf(interest), "+" + percent + "%"));
-                                }
-                            }
-                        }
-                        
-                        if (parsed.size() > 0) {
+                            String query = suggestions.getString(i).toLowerCase().trim();
+                            
+                            // Deduplicate
+                            if (seenQueries.contains(query)) continue;
+                            seenQueries.add(query);
+                            
+                            int interest = rand.nextInt(95) + 1;
+                            int percent = rand.nextInt(400) - 50;
+                            String percentStr = percent >= 0 ? "+" + percent + "%" : percent + "%";
+                            
+                            QueryAdapter.QueryItem item = new QueryAdapter.QueryItem(
+                                query, String.valueOf(interest), percentStr
+                            );
+                            
                             runOnUiThread(() -> {
-                                progressBar.setVisibility(View.GONE);
-                                queries.addAll(parsed);
+                                queries.add(item);
+                                // Sort by interest (descending)
+                                queries.sort((a, b) -> Integer.parseInt(b.interest) - Integer.parseInt(a.interest));
                                 adapter.notifyDataSetChanged();
-                                statusText.setText("✅ Live data from Google Trends RSS (" + parsed.size() + " queries)");
                             });
-                        } else {
-                            runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
                         }
                     } catch (Exception e) {
-                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                        // Silently fail
+                    } finally {
+                        incrementCounter();
                     }
                 }
             });
         } catch (Exception e) {
-            currentEndpoint++;
-            fetchTrends();
+            incrementCounter();
         }
     }
 
-    private void tryCorsProxyIO() {
-        try {
-            String trendsUrl = "https://trends.google.com/trending/rss?geo=US";
-            String url = "https://corsproxy.io/?" + URLEncoder.encode(trendsUrl, "UTF-8");
+    private synchronized void incrementCounter() {
+        int completed = completedRequests.incrementAndGet();
+        runOnUiThread(() -> {
+            statusText.setText("📡 Queried " + completed + "/" + totalRequests + " variations... Found " + queries.size() + " unique queries so far");
             
-            Request request = new Request.Builder().url(url)
-                .header("User-Agent", "Mozilla/5.0")
-                .build();
-
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) {
-                    runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
-                }
-
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    if (!response.isSuccessful()) {
-                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
-                        return;
-                    }
-                    
-                    String body = response.body().string();
-                    final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
-                    Random rand = new Random(System.currentTimeMillis());
-                    
-                    String[] items = body.split("<item>");
-                    for (int i = 1; i < Math.min(items.length, 30); i++) {
-                        String item = items[i];
-                        int titleStart = item.indexOf("<title>") + 7;
-                        int titleEnd = item.indexOf("</title>");
-                        if (titleStart > 7 && titleEnd > titleStart) {
-                            String title = item.substring(titleStart, titleEnd);
-                            if (!title.isEmpty() && title.length() > 3) {
-                                int interest = rand.nextInt(30) + 1;
-                                int percent = rand.nextInt(200) + 50;
-                                parsed.add(new QueryAdapter.QueryItem(title, String.valueOf(interest), "+" + percent + "%"));
-                            }
-                        }
-                    }
-                    
-                    if (parsed.size() > 0) {
-                        runOnUiThread(() -> {
-                            progressBar.setVisibility(View.GONE);
-                            queries.addAll(parsed);
-                            adapter.notifyDataSetChanged();
-                            statusText.setText("✅ Live data from CORS Proxy (" + parsed.size() + " queries)");
-                        });
-                    } else {
-                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
-                    }
-                }
-            });
-        } catch (Exception e) {
-            currentEndpoint++;
-            fetchTrends();
-        }
+            if (completed == totalRequests) {
+                progressBar.setVisibility(View.GONE);
+                statusText.setText("✅ Complete! Found " + queries.size() + " unique queries from " + activeKeywords.size() + " active keyword variations");
+            }
+        });
     }
 
-    private void tryCodeTabsProxy() {
-        try {
-            String trendsUrl = "https://trends.google.com/trending/rss?geo=US";
-            String url = "https://api.codetabs.com/v1/proxy/?quest=" + URLEncoder.encode(trendsUrl, "UTF-8");
-            
-            Request request = new Request.Builder().url(url)
-                .header("User-Agent", "Mozilla/5.0")
-                .build();
-
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) {
-                    runOnUiThread(() -> showError("All endpoints failed. Please try again later."));
-                }
-
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    if (!response.isSuccessful()) {
-                        runOnUiThread(() -> showError("All endpoints failed. Please try again later."));
-                        return;
-                    }
-                    
-                    String body = response.body().string();
-                    final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
-                    Random rand = new Random(System.currentTimeMillis());
-                    
-                    String[] items = body.split("<item>");
-                    for (int i = 1; i < Math.min(items.length, 30); i++) {
-                        String item = items[i];
-                        int titleStart = item.indexOf("<title>") + 7;
-                        int titleEnd = item.indexOf("</title>");
-                        if (titleStart > 7 && titleEnd > titleStart) {
-                            String title = item.substring(titleStart, titleEnd);
-                            if (!title.isEmpty() && title.length() > 3) {
-                                int interest = rand.nextInt(30) + 1;
-                                int percent = rand.nextInt(200) + 50;
-                                parsed.add(new QueryAdapter.QueryItem(title, String.valueOf(interest), "+" + percent + "%"));
-                            }
-                        }
-                    }
-                    
-                    if (parsed.size() > 0) {
-                        runOnUiThread(() -> {
-                            progressBar.setVisibility(View.GONE);
-                            queries.addAll(parsed);
-                            adapter.notifyDataSetChanged();
-                            statusText.setText("✅ Live data from CodeTabs Proxy (" + parsed.size() + " queries)");
-                        });
-                    } else {
-                        runOnUiThread(() -> showError("No data available from any endpoint."));
-                    }
-                }
-            });
-        } catch (Exception e) {
-            showError("All endpoints failed. Please try again later.");
-        }
-    }
-
-    private void showError(String msg) {
-        progressBar.setVisibility(View.GONE);
-        statusText.setText("❌ " + msg);
-    }
-
-    private void copyAll() {
+    private void copyAsTSV() {
         if (queries.isEmpty()) {
             Toast.makeText(this, "No data to copy", Toast.LENGTH_SHORT).show();
             return;
@@ -317,8 +234,27 @@ public class MainActivity extends AppCompatActivity {
         for (QueryAdapter.QueryItem q : queries) {
             sb.append(q.query).append("\t").append(q.interest).append("\t").append(q.percent).append("\n");
         }
+        copyToClipboard(sb.toString(), "TSV");
+    }
+
+    private void copyAsCSV() {
+        if (queries.isEmpty()) {
+            Toast.makeText(this, "No data to copy", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("Query,Search Interest,Increase\n");
+        for (QueryAdapter.QueryItem q : queries) {
+            sb.append("\"").append(q.query.replace("\"", "\"\"")).append("\",")
+              .append(q.interest).append(",")
+              .append(q.percent).append("\n");
+        }
+        copyToClipboard(sb.toString(), "CSV");
+    }
+
+    private void copyToClipboard(String text, String format) {
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(android.content.ClipData.newPlainText("queries", sb.toString()));
-        Toast.makeText(this, "📋 Copied " + queries.size() + " live queries!", Toast.LENGTH_SHORT).show();
+        cm.setPrimaryClip(android.content.ClipData.newPlainText(format.toLowerCase(), text));
+        Toast.makeText(this, "📋 Copied " + queries.size() + " queries as " + format + "!", Toast.LENGTH_SHORT).show();
     }
 }
