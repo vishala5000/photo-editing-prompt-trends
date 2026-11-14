@@ -4,34 +4,49 @@
     android:orientation="vertical" android:padding="12dp" android:background="#FAFAFA">
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Rising queries" android:textSize="20sp" android:textStyle="bold"
+        android:text="🎯 Universal Prompt Finder" android:textSize="20sp" android:textStyle="bold"
         android:textColor="#1a1a1a" android:paddingBottom="2dp"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Worldwide · Past week · YouTube"
-        android:textSize="13sp" android:textColor="#666" android:paddingBottom="12dp"/>
+        android:text="Real-time Google Trends • 30+ Keyword Variations"
+        android:textSize="12sp" android:textColor="#666" android:paddingBottom="8dp"/>
 
+    <!-- Search Box -->
+    <EditText android:id="@+id/etSearch"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="🔍 Type custom keyword (e.g., 'couple photo prompt')"
+        android:padding="12dp" android:background="@android:drawable/edit_text"
+        android:textSize="14sp" android:layout_marginBottom="8dp"/>
+
+    <!-- Action Buttons -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal">
         <Button android:id="@+id/btnRefresh" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="wrap_content" android:text="🔄 Refresh" android:layout_marginEnd="6dp"/>
+            android:layout_height="wrap_content" android:text="🚀 Fetch All" android:textSize="12sp"
+            android:layout_marginEnd="4dp"/>
         <Button android:id="@+id/btnCopyAll" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="wrap_content" android:text="📋 Copy All" android:layout_marginStart="6dp"/>
+            android:layout_height="wrap_content" android:text="📋 Copy TSV" android:textSize="12sp"
+            android:layout_marginStart="2dp" android:layout_marginEnd="2dp"/>
+        <Button android:id="@+id/btnCopyCSV" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="📊 Copy CSV" android:textSize="12sp"
+            android:layout_marginStart="4dp"/>
     </LinearLayout>
 
+    <!-- Status -->
     <TextView android:id="@+id/statusText" android:layout_width="match_parent"
-        android:layout_height="wrap_content" android:text="Tap Refresh to load..."
-        android:textSize="13sp" android:textColor="#444" android:padding="6dp"/>
+        android:layout_height="wrap_content" android:text="Tap 'Fetch All' to query 30+ variations..."
+        android:textSize="12sp" android:textColor="#444" android:padding="6dp"
+        android:background="#E3F2FD" android:layout_marginTop="4dp" android:layout_marginBottom="4dp"/>
 
     <!-- Table Headers -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:padding="12dp" android:background="#E0E0E0"
-        android:layout_marginTop="4dp" android:layout_marginBottom="4dp">
+        android:orientation="horizontal" android:padding="10dp" android:background="#1976D2"
+        android:layout_marginBottom="4dp">
         <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-            android:text="Query" android:textStyle="bold" android:textSize="13sp" android:textColor="#333"/>
+            android:text="Query" android:textStyle="bold" android:textSize="13sp" android:textColor="#FFF"/>
         <TextView android:layout_width="40dp" android:layout_height="wrap_content"
-            android:text="Int." android:gravity="center" android:textStyle="bold" android:textSize="13sp" android:textColor="#333"/>
+            android:text="Int." android:gravity="center" android:textStyle="bold" android:textSize="13sp" android:textColor="#FFF"/>
         <TextView android:layout_width="60dp" android:layout_height="wrap_content"
-            android:text="Increase" android:gravity="end" android:textStyle="bold" android:textSize="13sp" android:textColor="#333"/>
+            android:text="Increase" android:gravity="end" android:textStyle="bold" android:textSize="13sp" android:textColor="#FFF"/>
     </LinearLayout>
 
     <ProgressBar android:id="@+id/progressBar" android:layout_width="wrap_content"
