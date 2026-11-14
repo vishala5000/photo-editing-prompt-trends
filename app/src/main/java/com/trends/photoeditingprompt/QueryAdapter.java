@@ -6,16 +6,19 @@ import java.util.List;
 
 public class QueryAdapter extends RecyclerView.Adapter<QueryAdapter.VH> {
     public static class QueryItem {
-        public String query, interest, percent;
-        public QueryItem(String q, String i, String p) { query=q; interest=i; percent=p; }
+        public String query, interest, percent, source;
+        public QueryItem(String q, String i, String p, String s) { 
+            query=q; interest=i; percent=p; source=s; 
+        }
     }
     private List<QueryItem> items;
     public QueryAdapter(List<QueryItem> items) { this.items = items; }
 
     public static class VH extends RecyclerView.ViewHolder {
-        TextView tvQuery, tvInterest, tvPercent;
+        TextView tvSource, tvQuery, tvInterest, tvPercent;
         public VH(View v) {
             super(v);
+            tvSource = v.findViewById(R.id.tvSource);
             tvQuery = v.findViewById(R.id.tvQuery);
             tvInterest = v.findViewById(R.id.tvInterest);
             tvPercent = v.findViewById(R.id.tvPercent);
@@ -31,26 +34,42 @@ public class QueryAdapter extends RecyclerView.Adapter<QueryAdapter.VH> {
     @Override
     public void onBindViewHolder(VH holder, int position) {
         QueryItem item = items.get(position);
-        holder.tvQuery.setText((position + 1) + ". " + item.query);
+        
+        // Source icon
+        if ("youtube".equals(item.source)) {
+            holder.tvSource.setText("🎥");
+        } else if ("google".equals(item.source)) {
+            holder.tvSource.setText("🔍");
+        } else if ("trends".equals(item.source)) {
+            holder.tvSource.setText("📈");
+        } else {
+            holder.tvSource.setText("•");
+        }
+        
+        holder.tvQuery.setText(item.query);
         holder.tvInterest.setText(item.interest);
         holder.tvPercent.setText(item.percent);
         
         // Color coding based on increase percentage
         if (item.percent.startsWith("+")) {
-            int percentVal = Integer.parseInt(item.percent.replace("+", "").replace("%", ""));
-            if (percentVal >= 200) {
-                holder.tvPercent.setTextColor(0xFF1B5E20); // Dark green for breakout
-            } else if (percentVal >= 100) {
-                holder.tvPercent.setTextColor(0xFF2E7D32); // Green
-            } else if (percentVal >= 50) {
-                holder.tvPercent.setTextColor(0xFF4CAF50); // Light green
-            } else {
-                holder.tvPercent.setTextColor(0xFF81C784); // Pale green
+            try {
+                int percentVal = Integer.parseInt(item.percent.replace("+", "").replace("%", ""));
+                if (percentVal >= 200) {
+                    holder.tvPercent.setTextColor(0xFF1B5E20);
+                } else if (percentVal >= 100) {
+                    holder.tvPercent.setTextColor(0xFF2E7D32);
+                } else if (percentVal >= 50) {
+                    holder.tvPercent.setTextColor(0xFF4CAF50);
+                } else {
+                    holder.tvPercent.setTextColor(0xFF81C784);
+                }
+            } catch (Exception e) {
+                holder.tvPercent.setTextColor(0xFF4CAF50);
             }
         } else if (item.percent.startsWith("-")) {
-            holder.tvPercent.setTextColor(0xFFE57373); // Red for negative
+            holder.tvPercent.setTextColor(0xFFE57373);
         } else {
-            holder.tvPercent.setTextColor(0xFF9E9E9E); // Gray for neutral
+            holder.tvPercent.setTextColor(0xFF9E9E9E);
         }
         
         // Alternate row colors
