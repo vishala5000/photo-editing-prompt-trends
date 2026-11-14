@@ -6,67 +6,35 @@
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal" android:gravity="center_vertical" android:paddingBottom="4dp">
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="🧑‍🤝‍🧑" android:textSize="22sp"/>
+            android:text="🎥📈" android:textSize="22sp"/>
         <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-            android:text=" Human Portrait Prompt Finder" android:textSize="18sp" android:textStyle="bold"
+            android:text=" YouTube → Trends Finder" android:textSize="18sp" android:textStyle="bold"
             android:textColor="#1a1a1a"/>
     </LinearLayout>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Real-time prompts for PEOPLE (portraits, couples, babies, selfies)"
+        android:text="Click any suggestion to expand rising queries"
         android:textSize="11sp" android:textColor="#666" android:paddingBottom="8dp"/>
 
     <EditText android:id="@+id/etSearch"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:hint="🔍 Custom person (e.g., 'bride', 'newborn', 'ceo')"
+        android:hint="🔍 Custom keyword (leave empty for all 40 variations)"
         android:padding="10dp" android:background="@android:drawable/edit_text"
         android:textSize="13sp" android:layout_marginBottom="6dp"/>
 
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:layout_marginBottom="6dp">
-        <Button android:id="@+id/btnFilterAll" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="36dp" android:text="ALL" android:textSize="11sp"
-            android:layout_marginEnd="3dp" android:backgroundTint="#1976D2"/>
-        <Button android:id="@+id/btnFilterYT" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="36dp" android:text="🎥 YT" android:textSize="11sp"
-            android:layout_marginEnd="3dp" android:backgroundTint="#FF0000"/>
-        <Button android:id="@+id/btnFilterGG" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="36dp" android:text="🔍 GG" android:textSize="11sp"
-            android:layout_marginEnd="3dp" android:backgroundTint="#4285F4"/>
-        <Button android:id="@+id/btnFilterTR" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="36dp" android:text="📈 TR" android:textSize="11sp"
-            android:backgroundTint="#0F9D58"/>
-    </LinearLayout>
-
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal">
         <Button android:id="@+id/btnRefresh" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="wrap_content" android:text="🚀 Fetch Human Prompts" android:textSize="12sp"
+            android:layout_height="wrap_content" android:text="🚀 Fetch All" android:textSize="12sp"
             android:layout_marginEnd="4dp" android:backgroundTint="#1976D2"/>
-        <Button android:id="@+id/btnCopyTSV" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="wrap_content" android:text="📋 TSV" android:textSize="12sp"
-            android:layout_marginStart="2dp" android:layout_marginEnd="2dp"/>
-        <Button android:id="@+id/btnCopyCSV" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="wrap_content" android:text="📊 CSV" android:textSize="12sp"
+        <Button android:id="@+id/btnCopyAll" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="📋 Copy All" android:textSize="12sp"
             android:layout_marginStart="4dp"/>
     </LinearLayout>
 
     <TextView android:id="@+id/statusText" android:layout_width="match_parent"
-        android:layout_height="wrap_content" android:text="Fetching human-centric prompt variations..."
+        android:layout_height="wrap_content" android:text="Tap 'Fetch All' to start..."
         android:textSize="11sp" android:textColor="#444" android:padding="6dp"
         android:background="#E3F2FD" android:layout_marginTop="4dp" android:layout_marginBottom="4dp"/>
-
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:padding="8dp" android:background="#1976D2"
-        android:layout_marginBottom="4dp">
-        <TextView android:layout_width="24dp" android:layout_height="wrap_content"
-            android:text="Src" android:gravity="center" android:textStyle="bold" android:textSize="11sp" android:textColor="#FFF"/>
-        <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-            android:text="Human Prompt Query" android:textStyle="bold" android:textSize="12sp" android:textColor="#FFF"/>
-        <TextView android:layout_width="35dp" android:layout_height="wrap_content"
-            android:text="Int." android:gravity="center" android:textStyle="bold" android:textSize="11sp" android:textColor="#FFF"/>
-        <TextView android:layout_width="55dp" android:layout_height="wrap_content"
-            android:text="Increase" android:gravity="end" android:textStyle="bold" android:textSize="11sp" android:textColor="#FFF"/>
-    </LinearLayout>
 
     <ProgressBar android:id="@+id/progressBar" android:layout_width="wrap_content"
         android:layout_height="wrap_content" android:layout_gravity="center" android:visibility="gone"/>
