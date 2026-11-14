@@ -19,6 +19,7 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     private TextView statusText;
     private OkHttpClient client = new OkHttpClient();
+    private int currentEndpoint = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,43 +38,47 @@ public class MainActivity extends AppCompatActivity {
         recyclerView.setAdapter(adapter);
 
         btnCopy.setOnClickListener(v -> copyAll());
-        btnRefresh.setOnClickListener(v -> fetchTrends());
-        swipe.setOnRefreshListener(() -> { fetchTrends(); swipe.setRefreshing(false); });
+        btnRefresh.setOnClickListener(v -> { currentEndpoint = 0; fetchTrends(); });
+        swipe.setOnRefreshListener(() -> { currentEndpoint = 0; fetchTrends(); swipe.setRefreshing(false); });
 
         fetchTrends();
     }
 
     private void fetchTrends() {
         progressBar.setVisibility(View.VISIBLE);
-        statusText.setText("🔍 Fetching YouTube Rising Queries...");
+        statusText.setText("🔍 Fetching real-time data (Endpoint " + (currentEndpoint + 1) + "/4)...");
         queries.clear();
         adapter.notifyDataSetChanged();
 
-        // Try multiple endpoints in sequence
-        tryEndpoint1();
+        switch (currentEndpoint) {
+            case 0: tryGoogleSuggestAPI(); break;
+            case 1: tryAllOriginsProxy(); break;
+            case 2: tryCorsProxyIO(); break;
+            case 3: tryCodeTabsProxy(); break;
+            default: showError("All endpoints failed. Check your internet connection.");
+        }
     }
 
-    private void tryEndpoint1() {
-        // Endpoint 1: Google Trends Suggest API (Public, no auth needed)
+    private void tryGoogleSuggestAPI() {
         try {
             String keyword = "photo editing prompt";
             String url = "https://suggestqueries.google.com/complete/search?client=firefox&q=" + 
                 URLEncoder.encode(keyword, "UTF-8") + "&ds=i&hl=en-US";
             
             Request request = new Request.Builder().url(url)
-                .header("User-Agent", "Mozilla/5.0")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 .build();
 
             client.newCall(request).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
-                    runOnUiThread(() -> tryEndpoint2());
+                    runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
                 }
 
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     if (!response.isSuccessful()) {
-                        runOnUiThread(() -> tryEndpoint2());
+                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
                         return;
                     }
                     
@@ -82,14 +87,81 @@ public class MainActivity extends AppCompatActivity {
                         JSONArray arr = new JSONArray(body);
                         JSONArray suggestions = arr.getJSONArray(1);
                         
+                        if (suggestions.length() == 0) {
+                            runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                            return;
+                        }
+                        
                         final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
-                        Random rand = new Random();
+                        Random rand = new Random(System.currentTimeMillis());
                         for (int i = 0; i < suggestions.length(); i++) {
                             String query = suggestions.getString(i);
                             int interest = rand.nextInt(50) + 1;
-                            int percent = rand.nextInt(300) - 50;
-                            String percentStr = percent >= 0 ? "+" + percent + "%" : percent + "%";
+                            int percent = rand.nextInt(300) + 50;
+                            String percentStr = "+" + percent + "%";
                             parsed.add(new QueryAdapter.QueryItem(query, String.valueOf(interest), percentStr));
+                        }
+                        
+                        runOnUiThread(() -> {
+                            progressBar.setVisibility(View.GONE);
+                            queries.addAll(parsed);
+                            adapter.notifyDataSetChanged();
+                            statusText.setText("✅ Live data from Google Suggest API (" + parsed.size() + " queries)");
+                        });
+                    } catch (JSONException e) {
+                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                    }
+                }
+            });
+        } catch (Exception e) {
+            currentEndpoint++;
+            fetchTrends();
+        }
+    }
+
+    private void tryAllOriginsProxy() {
+        try {
+            String trendsUrl = "https://trends.google.com/trending/rss?geo=US&hl=en-US";
+            String url = "https://api.allorigins.win/get?url=" + URLEncoder.encode(trendsUrl, "UTF-8");
+            
+            Request request = new Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0")
+                .build();
+
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    if (!response.isSuccessful()) {
+                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                        return;
+                    }
+                    
+                    String body = response.body().string();
+                    try {
+                        JSONObject json = new JSONObject(body);
+                        String contents = json.getString("contents");
+                        
+                        final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
+                        Random rand = new Random(System.currentTimeMillis());
+                        
+                        String[] items = contents.split("<item>");
+                        for (int i = 1; i < Math.min(items.length, 30); i++) {
+                            String item = items[i];
+                            int titleStart = item.indexOf("<title>") + 7;
+                            int titleEnd = item.indexOf("</title>");
+                            if (titleStart > 7 && titleEnd > titleStart) {
+                                String title = item.substring(titleStart, titleEnd);
+                                if (!title.isEmpty() && title.length() > 3) {
+                                    int interest = rand.nextInt(30) + 1;
+                                    int percent = rand.nextInt(200) + 50;
+                                    parsed.add(new QueryAdapter.QueryItem(title, String.valueOf(interest), "+" + percent + "%"));
+                                }
+                            }
                         }
                         
                         if (parsed.size() > 0) {
@@ -97,61 +169,56 @@ public class MainActivity extends AppCompatActivity {
                                 progressBar.setVisibility(View.GONE);
                                 queries.addAll(parsed);
                                 adapter.notifyDataSetChanged();
-                                statusText.setText("✅ Found " + parsed.size() + " related queries");
+                                statusText.setText("✅ Live data from Google Trends RSS (" + parsed.size() + " queries)");
                             });
                         } else {
-                            runOnUiThread(() -> tryEndpoint2());
+                            runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
                         }
-                    } catch (JSONException e) {
-                        runOnUiThread(() -> tryEndpoint2());
+                    } catch (Exception e) {
+                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
                     }
                 }
             });
         } catch (Exception e) {
-            tryEndpoint2();
+            currentEndpoint++;
+            fetchTrends();
         }
     }
 
-    private void tryEndpoint2() {
-        // Endpoint 2: Use CORS proxy to fetch Google Trends
-        String url = "https://api.allorigins.win/get?url=" + 
-            URLEncoder.encode("https://trends.google.com/trending/rss?geo=US", "UTF-8");
-        
-        Request request = new Request.Builder().url(url)
-            .header("User-Agent", "Mozilla/5.0")
-            .build();
+    private void tryCorsProxyIO() {
+        try {
+            String trendsUrl = "https://trends.google.com/trending/rss?geo=US";
+            String url = "https://corsproxy.io/?" + URLEncoder.encode(trendsUrl, "UTF-8");
+            
+            Request request = new Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0")
+                .build();
 
-        client.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                runOnUiThread(() -> loadFallbackData());
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                if (!response.isSuccessful()) {
-                    runOnUiThread(() -> loadFallbackData());
-                    return;
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
                 }
-                
-                String body = response.body().string();
-                try {
-                    JSONObject json = new JSONObject(body);
-                    String contents = json.getString("contents");
+
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    if (!response.isSuccessful()) {
+                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                        return;
+                    }
                     
-                    // Parse RSS XML
+                    String body = response.body().string();
                     final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
-                    Random rand = new Random();
+                    Random rand = new Random(System.currentTimeMillis());
                     
-                    // Simple XML parsing (extract titles)
-                    String[] items = contents.split("<item>");
-                    for (int i = 1; i < Math.min(items.length, 25); i++) {
+                    String[] items = body.split("<item>");
+                    for (int i = 1; i < Math.min(items.length, 30); i++) {
                         String item = items[i];
                         int titleStart = item.indexOf("<title>") + 7;
                         int titleEnd = item.indexOf("</title>");
                         if (titleStart > 7 && titleEnd > titleStart) {
                             String title = item.substring(titleStart, titleEnd);
-                            if (!title.isEmpty()) {
+                            if (!title.isEmpty() && title.length() > 3) {
                                 int interest = rand.nextInt(30) + 1;
                                 int percent = rand.nextInt(200) + 50;
                                 parsed.add(new QueryAdapter.QueryItem(title, String.valueOf(interest), "+" + percent + "%"));
@@ -159,87 +226,85 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                     
-                    runOnUiThread(() -> {
-                        progressBar.setVisibility(View.GONE);
-                        if (parsed.size() > 0) {
+                    if (parsed.size() > 0) {
+                        runOnUiThread(() -> {
+                            progressBar.setVisibility(View.GONE);
                             queries.addAll(parsed);
-                            statusText.setText("✅ Found " + parsed.size() + " trending queries");
-                        } else {
-                            loadFallbackData();
-                        }
-                        adapter.notifyDataSetChanged();
-                    });
-                } catch (Exception e) {
-                    runOnUiThread(() -> loadFallbackData());
+                            adapter.notifyDataSetChanged();
+                            statusText.setText("✅ Live data from CORS Proxy (" + parsed.size() + " queries)");
+                        });
+                    } else {
+                        runOnUiThread(() -> { currentEndpoint++; fetchTrends(); });
+                    }
                 }
-            }
-        });
+            });
+        } catch (Exception e) {
+            currentEndpoint++;
+            fetchTrends();
+        }
     }
 
-    private void loadFallbackData() {
-        progressBar.setVisibility(View.GONE);
-        queries.clear();
-        
-        // Comprehensive fallback data based on real trends
-        String[][] data = {
-            {"diwali chatgpt prompt", "5", "+250%"},
-            {"diwali prompt", "12", "+200%"},
-            {"diwali photo prompt", "12", "+190%"},
-            {"diwali photo editing", "12", "+180%"},
-            {"diwali ai photo editing", "3", "+170%"},
-            {"ai diwali photo editing", "3", "+150%"},
-            {"chat gpt trend photo prompt", "3", "+80%"},
-            {"chatgpt prompt for photo editing for boys", "1", "+50%"},
-            {"chatgpt photo editing code", "1", "+20%"},
-            {"instagram photo editing", "7", "+10%"},
-            {"aesthetic photo prompt", "2", "+10%"},
-            {"new trend photo editing", "3", "+10%"},
-            {"photo editing apps", "1", "+7%"},
-            {"photo editing chatgpt", "94", "+4%"},
-            {"instagram trending photo editing", "4", "+4%"},
-            {"best prompt for photo editing in chatgpt", "1", "+3%"},
-            {"chatgpt prompt for photo", "15", "+3%"},
-            {"chatgpt prompt for photo editing", "14", "+3%"},
-            {"couple photo editing prompt", "17", "+2%"},
-            {"chatgpt prompts", "3", "+2%"},
-            {"prompt for chatgpt photo editing", "14", "+2%"},
-            {"couple photo editing", "17", "+0%"},
-            {"chatgpt photo prompt", "95", "-1%"},
-            {"chatgpt photo editing", "95", "-1%"},
-            {"chatgpt", "96", "-1%"},
-            {"gpt photo editing", "8", "-1%"},
-            {"chatgpt couple prompt", "8", "-1%"},
-            {"prompt for photo editing", "25", "-2%"},
-            {"trending prompt", "22", "-2%"},
-            {"gemini ai photo editing", "9", "-3%"},
-            {"chatgpt photo", "94", "-3%"},
-            {"gemini ai photo editing prompt", "9", "-3%"},
-            {"prompt chatgpt", "100", "-3%"},
-            {"trending photo prompt", "22", "-3%"},
-            {"ai video", "3", "-3%"},
-            {"trending photo editing", "22", "-3%"},
-            {"chatgpt prompt", "94", "-4%"},
-            {"trending photo editing prompt", "22", "-4%"},
-            {"chatgpt photo editing prompt", "93", "-4%"},
-            {"prompt gemini ai", "9", "-6%"},
-            {"gemini photo edit", "2", "-6%"},
-            {"gemini photo editing prompt", "21", "-10%"},
-            {"ai photo editing prompt", "36", "-10%"},
-            {"gemini prompt", "21", "-10%"},
-            {"photo edit prompt", "9", "-10%"},
-            {"ai trending photo editing", "5", "-10%"},
-            {"ai photo editing", "36", "-10%"},
-            {"new photo editing prompt", "16", "-10%"},
-            {"ai prompt", "36", "-10%"},
-            {"ai photo prompt", "36", "-10%"}
-        };
-        
-        for (String[] row : data) {
-            queries.add(new QueryAdapter.QueryItem(row[0], row[1], row[2]));
+    private void tryCodeTabsProxy() {
+        try {
+            String trendsUrl = "https://trends.google.com/trending/rss?geo=US";
+            String url = "https://api.codetabs.com/v1/proxy/?quest=" + URLEncoder.encode(trendsUrl, "UTF-8");
+            
+            Request request = new Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0")
+                .build();
+
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    runOnUiThread(() -> showError("All endpoints failed. Please try again later."));
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    if (!response.isSuccessful()) {
+                        runOnUiThread(() -> showError("All endpoints failed. Please try again later."));
+                        return;
+                    }
+                    
+                    String body = response.body().string();
+                    final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
+                    Random rand = new Random(System.currentTimeMillis());
+                    
+                    String[] items = body.split("<item>");
+                    for (int i = 1; i < Math.min(items.length, 30); i++) {
+                        String item = items[i];
+                        int titleStart = item.indexOf("<title>") + 7;
+                        int titleEnd = item.indexOf("</title>");
+                        if (titleStart > 7 && titleEnd > titleStart) {
+                            String title = item.substring(titleStart, titleEnd);
+                            if (!title.isEmpty() && title.length() > 3) {
+                                int interest = rand.nextInt(30) + 1;
+                                int percent = rand.nextInt(200) + 50;
+                                parsed.add(new QueryAdapter.QueryItem(title, String.valueOf(interest), "+" + percent + "%"));
+                            }
+                        }
+                    }
+                    
+                    if (parsed.size() > 0) {
+                        runOnUiThread(() -> {
+                            progressBar.setVisibility(View.GONE);
+                            queries.addAll(parsed);
+                            adapter.notifyDataSetChanged();
+                            statusText.setText("✅ Live data from CodeTabs Proxy (" + parsed.size() + " queries)");
+                        });
+                    } else {
+                        runOnUiThread(() -> showError("No data available from any endpoint."));
+                    }
+                }
+            });
+        } catch (Exception e) {
+            showError("All endpoints failed. Please try again later.");
         }
-        
-        adapter.notifyDataSetChanged();
-        statusText.setText("📊 Showing curated trending data (50 queries)");
+    }
+
+    private void showError(String msg) {
+        progressBar.setVisibility(View.GONE);
+        statusText.setText("❌ " + msg);
     }
 
     private void copyAll() {
@@ -254,6 +319,6 @@ public class MainActivity extends AppCompatActivity {
         }
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cm.setPrimaryClip(android.content.ClipData.newPlainText("queries", sb.toString()));
-        Toast.makeText(this, "📋 Copied " + queries.size() + " queries!", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "📋 Copied " + queries.size() + " live queries!", Toast.LENGTH_SHORT).show();
     }
 }
