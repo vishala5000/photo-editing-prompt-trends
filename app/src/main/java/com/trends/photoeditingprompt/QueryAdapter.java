@@ -31,14 +31,33 @@ public class QueryAdapter extends RecyclerView.Adapter<QueryAdapter.VH> {
     @Override
     public void onBindViewHolder(VH holder, int position) {
         QueryItem item = items.get(position);
-        holder.tvQuery.setText(item.query);
+        holder.tvQuery.setText((position + 1) + ". " + item.query);
         holder.tvInterest.setText(item.interest);
         holder.tvPercent.setText(item.percent);
         
-        if (item.percent.contains("Breakout") || item.percent.contains("+")) {
-            holder.tvPercent.setTextColor(0xFF4CAF50); // Green for positive
+        // Color coding based on increase percentage
+        if (item.percent.startsWith("+")) {
+            int percentVal = Integer.parseInt(item.percent.replace("+", "").replace("%", ""));
+            if (percentVal >= 200) {
+                holder.tvPercent.setTextColor(0xFF1B5E20); // Dark green for breakout
+            } else if (percentVal >= 100) {
+                holder.tvPercent.setTextColor(0xFF2E7D32); // Green
+            } else if (percentVal >= 50) {
+                holder.tvPercent.setTextColor(0xFF4CAF50); // Light green
+            } else {
+                holder.tvPercent.setTextColor(0xFF81C784); // Pale green
+            }
+        } else if (item.percent.startsWith("-")) {
+            holder.tvPercent.setTextColor(0xFFE57373); // Red for negative
         } else {
-            holder.tvPercent.setTextColor(0xFF9E9E9E); // Gray for negative/neutral
+            holder.tvPercent.setTextColor(0xFF9E9E9E); // Gray for neutral
+        }
+        
+        // Alternate row colors
+        if (position % 2 == 0) {
+            holder.itemView.setBackgroundColor(0xFFF5F5F5);
+        } else {
+            holder.itemView.setBackgroundColor(0xFFFFFFFF);
         }
     }
 
