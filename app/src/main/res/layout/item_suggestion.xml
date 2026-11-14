@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:padding="12dp"
+    android:background="?attr/selectableItemBackground" android:layout_marginBottom="8dp">
+
+    <!-- Main Suggestion Row -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        
+        <ImageView android:id="@+id/ivExpand"
+            android:layout_width="24dp" android:layout_height="24dp"
+            android:src="@android:drawable/arrow_down_float"
+            android:layout_marginEnd="8dp"/>
+        
+        <TextView android:id="@+id/tvSuggestion"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:textSize="15sp" android:textStyle="bold" android:textColor="#1976D2"/>
+        
+        <Button android:id="@+id/btnCopy"
+            android:layout_width="wrap_content" android:layout_height="36dp"
+            android:text="📋 Copy" android:textSize="11sp"
+            android:backgroundTint="#4CAF50" android:textColor="#FFF"/>
+    </LinearLayout>
+
+    <!-- Rising Queries (Hidden by default) -->
+    <LinearLayout android:id="@+id/layoutRising"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:visibility="gone"
+        android:layout_marginTop="8dp" android:layout_marginStart="32dp">
+        
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="📈 Rising Queries:" android:textSize="12sp" android:textStyle="bold"
+            android:textColor="#666" android:layout_marginBottom="4dp"/>
+        
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvRising"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    </LinearLayout>
+</LinearLayout>
