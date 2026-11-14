@@ -24,30 +24,14 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private OkHttpClient client = new OkHttpClient();
     private Set<String> youtubeSuggestions = new HashSet<>();
     private Map<String, List<RisingQueryAdapter.RisingItem>> risingQueriesMap = new ConcurrentHashMap<>();
-    private int step1Count = 0, step2Count = 0;
-    private boolean step1Complete = false;
+    private List<String> dynamicSeeds = new ArrayList<>();
+    private int step0Count = 0, step1Count = 0, step2Count = 0;
+    private boolean step0Complete = false, step1Complete = false;
 
-    private final String[] KEYWORD_VARIATIONS = {
-        "photo editing prompt for boy", "photo editing prompt for girl",
-        "photo editing prompt for couple", "photo editing prompt for baby",
-        "photo editing prompt for newborn", "photo editing prompt for family",
-        "photo editing prompt for wedding", "photo editing prompt for bride",
-        "photo editing prompt for birthday", "photo editing prompt for portrait",
-        "photo editing prompt for selfie", "photo editing prompt for influencer",
-        "photo editing prompt for model", "photo editing prompt for professional headshot",
-        "photo editing prompt for face retouching", "photo editing prompt for skin smoothing",
-        "photo editing prompt for cinematic portrait", "photo editing prompt for vintage portrait",
-        "photo editing prompt for man", "photo editing prompt for woman",
-        "photo editing prompt for child", "photo editing prompt for group photo",
-        "photo editing prompt for linkedin profile", "photo editing prompt for dating profile",
-        "photo editing prompt for passport photo", "photo editing prompt for teeth whitening",
-        "photo editing prompt for eye enhancement", "photo editing prompt for hair color",
-        "photo editing prompt for background removal", "photo editing prompt for aesthetic selfie",
-        "photo editing prompt for maternity", "photo editing prompt for graduation",
-        "photo editing prompt for senior pictures", "photo editing prompt for toddler",
-        "photo editing prompt for friends", "photo editing prompt for groom",
-        "photo editing prompt for corporate headshot", "photo editing prompt for dramatic lighting",
-        "photo editing prompt for glowing skin", "photo editing prompt for human portrait"
+    // DYNAMIC seeds: These are combined with live trending topics
+    private final String[] BASE_PHRASES = {
+        "photo editing prompt", "photo editing ideas", "portrait editing prompt",
+        "face retouching prompt", "selfie editing prompt", "couple photo prompt"
     };
 
     @Override
@@ -79,41 +63,109 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         suggestions.clear();
         youtubeSuggestions.clear();
         risingQueriesMap.clear();
+        dynamicSeeds.clear();
         adapter.notifyDataSetChanged();
-        step1Count = 0;
-        step2Count = 0;
-        step1Complete = false;
+        step0Count = 0; step1Count = 0; step2Count = 0;
+        step0Complete = false; step1Complete = false;
 
-        String customKeyword = etSearch.getText().toString().trim();
-        String[] keywordsToSearch = customKeyword.isEmpty() ? 
-            KEYWORD_VARIATIONS : generateHumanVariations(customKeyword);
+        statusText.setText("🌐 STEP 0: Fetching today's trending topics as dynamic seeds...");
 
-        statusText.setText("🎥 STEP 1: Fetching YouTube suggestions from " + keywordsToSearch.length + " keywords...");
+        // STEP 0: Get REAL trending topics from Google Trends RSS (changes daily!)
+        fetchDynamicSeeds();
+    }
+
+    private void fetchDynamicSeeds() {
+        try {
+            String trendsUrl = "https://trends.google.com/trending/rss?geo=US&hl=en-US";
+            String proxyUrl = "https://api.allorigins.win/get?url=" + URLEncoder.encode(trendsUrl, "UTF-8");
+            
+            Request request = new Request.Builder().url(proxyUrl)
+                .header("User-Agent", "Mozilla/5.0")
+                .build();
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) { useFallbackSeeds(); }
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    try {
+                        if (!response.isSuccessful()) { useFallbackSeeds(); return; }
+                        String body = response.body().string();
+                        JSONObject json = new JSONObject(body);
+                        String contents = json.getString("contents");
+                        
+                        String[] items = contents.split("<item>");
+                        for (int i = 1; i < Math.min(items.length, 50); i++) {
+                            String item = items[i];
+                            int titleStart = item.indexOf("<title>") + 7;
+                            int titleEnd = item.indexOf("</title>");
+                            if (titleStart > 7 && titleEnd > titleStart) {
+                                String title = item.substring(titleStart, titleEnd).toLowerCase().trim();
+                                // Only include photo/people related trending topics
+                                if (title.contains("photo") || title.contains("edit") || 
+                                    title.contains("portrait") || title.contains("selfie") ||
+                                    title.contains("ai") || title.contains("image") ||
+                                    title.contains("face") || title.contains("model") ||
+                                    title.contains("celebrity") || title.contains("actor") ||
+                                    title.contains("actress") || title.contains("singer")) {
+                                    dynamicSeeds.add(title);
+                                }
+                            }
+                        }
+                        
+                        runOnUiThread(() -> {
+                            step0Complete = true;
+                            statusText.setText("✅ Found " + dynamicSeeds.size() + " trending topics. Starting STEP 1...");
+                            startStep1();
+                        });
+                    } catch (Exception e) { useFallbackSeeds(); }
+                }
+            });
+        } catch (Exception e) { useFallbackSeeds(); }
+    }
+
+    private void useFallbackSeeds() {
+        // If trending fetch fails, use base phrases + custom input
+        String custom = etSearch.getText().toString().trim();
+        if (!custom.isEmpty()) {
+            dynamicSeeds.add(custom);
+        }
+        for (String base : BASE_PHRASES) {
+            dynamicSeeds.add(base);
+        }
+        runOnUiThread(() -> {
+            step0Complete = true;
+            statusText.setText("✅ Using " + dynamicSeeds.size() + " seed phrases. Starting STEP 1...");
+            startStep1();
+        });
+    }
+
+    private void startStep1() {
+        // Combine dynamic seeds with base phrases
+        List<String> allKeywords = new ArrayList<>();
+        String custom = etSearch.getText().toString().trim();
+        if (!custom.isEmpty()) allKeywords.add(custom);
+        
+        for (String seed : dynamicSeeds) {
+            allKeywords.add(seed + " editing prompt");
+            allKeywords.add("photo editing prompt for " + seed);
+        }
+        for (String base : BASE_PHRASES) {
+            allKeywords.add(base);
+            allKeywords.add(base + " for boy");
+            allKeywords.add(base + " for girl");
+            allKeywords.add(base + " for couple");
+        }
+
+        statusText.setText("🎥 STEP 1: Fetching YouTube suggestions from " + allKeywords.size() + " dynamic keywords...");
 
         ExecutorService executor = Executors.newFixedThreadPool(12);
-        for (String keyword : keywordsToSearch) {
-            executor.submit(() -> fetchYouTubeSuggestions(keyword));
+        for (String keyword : allKeywords) {
+            executor.submit(() -> fetchYouTubeSuggestions(keyword, allKeywords.size()));
         }
         executor.shutdown();
     }
 
-    private String[] generateHumanVariations(String base) {
-        String[] suffixes = {
-            " for boy", " for girl", " for couple", " for baby", " for family",
-            " for wedding", " for birthday", " for portrait", " for selfie",
-            " for influencer", " for model", " for professional headshot",
-            " for face retouching", " for skin smoothing", " cinematic portrait",
-            " vintage portrait", " aesthetic selfie", " for linkedin profile",
-            " for dating profile", " for group photo"
-        };
-        String[] result = new String[suffixes.length];
-        for (int i = 0; i < suffixes.length; i++) {
-            result[i] = base + suffixes[i];
-        }
-        return result;
-    }
-
-    private void fetchYouTubeSuggestions(String keyword) {
+    private void fetchYouTubeSuggestions(String keyword, int total) {
         try {
             String url = "http://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=" + 
                 URLEncoder.encode(keyword, "UTF-8") + "&hl=en-US";
@@ -122,18 +174,18 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                 .build();
             client.newCall(request).enqueue(new Callback() {
                 @Override
-                public void onFailure(Call call, IOException e) { checkStep1Complete(); }
+                public void onFailure(Call call, IOException e) { checkStep1Complete(total); }
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     try {
-                        if (!response.isSuccessful()) { checkStep1Complete(); return; }
+                        if (!response.isSuccessful()) { checkStep1Complete(total); return; }
                         String body = response.body().string();
                         int start = body.indexOf("[");
                         int end = body.lastIndexOf("]");
-                        if (start == -1 || end == -1) { checkStep1Complete(); return; }
+                        if (start == -1 || end == -1) { checkStep1Complete(total); return; }
                         body = body.substring(start, end + 1);
                         JSONArray arr = new JSONArray(body);
-                        if (arr.length() < 2) { checkStep1Complete(); return; }
+                        if (arr.length() < 2) { checkStep1Complete(total); return; }
                         JSONArray suggestionsArr = arr.getJSONArray(1);
                         
                         for (int i = 0; i < suggestionsArr.length(); i++) {
@@ -146,15 +198,15 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                                 }
                             }
                         }
-                    } catch (Exception e) {} finally { checkStep1Complete(); }
+                    } catch (Exception e) {} finally { checkStep1Complete(total); }
                 }
             });
-        } catch (Exception e) { checkStep1Complete(); }
+        } catch (Exception e) { checkStep1Complete(total); }
     }
 
-    private synchronized void checkStep1Complete() {
+    private synchronized void checkStep1Complete(int total) {
         step1Count++;
-        if (step1Count >= KEYWORD_VARIATIONS.length && !step1Complete) {
+        if (step1Count >= total && !step1Complete) {
             step1Complete = true;
             runOnUiThread(() -> {
                 statusText.setText("✅ STEP 1 Complete! Found " + youtubeSuggestions.size() + " YouTube suggestions. Starting STEP 2...");
@@ -163,7 +215,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
             });
         } else {
             runOnUiThread(() -> {
-                statusText.setText("🎥 STEP 1: " + step1Count + "/" + KEYWORD_VARIATIONS.length + " keywords queried... " + youtubeSuggestions.size() + " suggestions so far");
+                statusText.setText("🎥 STEP 1: " + step1Count + "/" + total + " | " + youtubeSuggestions.size() + " suggestions");
             });
         }
     }
@@ -179,7 +231,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     }
 
     private void startStep2() {
-        statusText.setText("📈 STEP 2: Searching " + youtubeSuggestions.size() + " YouTube suggestions in Google Trends...");
+        statusText.setText("📈 STEP 2: Searching " + youtubeSuggestions.size() + " suggestions in Google Trends...");
         
         ExecutorService executor = Executors.newFixedThreadPool(8);
         for (String suggestion : youtubeSuggestions) {
@@ -212,9 +264,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                         JSONObject json = new JSONObject(body);
                         String contents = json.getString("contents");
                         
-                        if (contents.startsWith(")]}'\n")) {
-                            contents = contents.substring(5);
-                        }
+                        if (contents.startsWith(")]}'\n")) contents = contents.substring(5);
                         
                         JSONObject root = new JSONObject(contents);
                         JSONObject defaultObj = root.getJSONObject("default");
@@ -234,7 +284,6 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                             }
                             
                             risingQueriesMap.put(keyword, risingItems);
-                            
                             runOnUiThread(() -> updateSuggestionWithRising(keyword, risingItems));
                         }
                     } catch (Exception e) {} finally { checkStep2Complete(); }
@@ -257,7 +306,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private synchronized void checkStep2Complete() {
         step2Count++;
         runOnUiThread(() -> {
-            statusText.setText("📈 STEP 2: " + step2Count + "/" + youtubeSuggestions.size() + " searched... " + risingQueriesMap.size() + " have rising queries");
+            statusText.setText("📈 STEP 2: " + step2Count + "/" + youtubeSuggestions.size() + " | " + risingQueriesMap.size() + " with rising queries");
             if (step2Count >= youtubeSuggestions.size()) {
                 progressBar.setVisibility(View.GONE);
                 statusText.setText("✅ Complete! " + suggestions.size() + " suggestions, " + risingQueriesMap.size() + " with rising queries");
@@ -286,10 +335,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     }
 
     private void copyAll() {
-        if (suggestions.isEmpty()) {
-            Toast.makeText(this, "No data", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (suggestions.isEmpty()) { Toast.makeText(this, "No data", Toast.LENGTH_SHORT).show(); return; }
         
         StringBuilder sb = new StringBuilder();
         for (SuggestionAdapter.SuggestionItem item : suggestions) {
