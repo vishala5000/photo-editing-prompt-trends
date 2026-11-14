@@ -14,18 +14,16 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements SuggestionAdapter.OnCopyClickListener {
     private RecyclerView recyclerView;
-    private List<QueryAdapter.QueryItem> allQueries = new ArrayList<>();
-    private List<QueryAdapter.QueryItem> filteredQueries = new ArrayList<>();
-    private QueryAdapter adapter;
+    private List<SuggestionAdapter.SuggestionItem> suggestions = new ArrayList<>();
+    private SuggestionAdapter adapter;
     private ProgressBar progressBar;
     private TextView statusText;
     private EditText etSearch;
     private OkHttpClient client = new OkHttpClient();
-    private Set<String> seenQueries = new HashSet<>();
     private Set<String> youtubeSuggestions = new HashSet<>();
-    private String currentFilter = "all";
+    private Map<String, List<RisingQueryAdapter.RisingItem>> risingQueriesMap = new ConcurrentHashMap<>();
     private int step1Count = 0, step2Count = 0;
     private boolean step1Complete = false;
 
@@ -62,37 +60,25 @@ public class MainActivity extends AppCompatActivity {
         statusText = findViewById(R.id.statusText);
         etSearch = findViewById(R.id.etSearch);
         SwipeRefreshLayout swipe = findViewById(R.id.swipeRefresh);
-        Button btnCopyTSV = findViewById(R.id.btnCopyTSV);
-        Button btnCopyCSV = findViewById(R.id.btnCopyCSV);
+        Button btnCopyAll = findViewById(R.id.btnCopyAll);
         Button btnRefresh = findViewById(R.id.btnRefresh);
-        Button btnFilterAll = findViewById(R.id.btnFilterAll);
-        Button btnFilterYT = findViewById(R.id.btnFilterYT);
-        Button btnFilterGG = findViewById(R.id.btnFilterGG);
-        Button btnFilterTR = findViewById(R.id.btnFilterTR);
 
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
-        adapter = new QueryAdapter(filteredQueries);
+        adapter = new SuggestionAdapter(suggestions, this);
         recyclerView.setAdapter(adapter);
 
-        btnCopyTSV.setOnClickListener(v -> copyAsTSV());
-        btnCopyCSV.setOnClickListener(v -> copyAsCSV());
+        btnCopyAll.setOnClickListener(v -> copyAll());
         btnRefresh.setOnClickListener(v -> startPipeline());
         swipe.setOnRefreshListener(() -> { startPipeline(); swipe.setRefreshing(false); });
-        
-        btnFilterAll.setOnClickListener(v -> { currentFilter = "all"; applyFilter(); });
-        btnFilterYT.setOnClickListener(v -> { currentFilter = "youtube"; applyFilter(); });
-        btnFilterGG.setOnClickListener(v -> { currentFilter = "google"; applyFilter(); });
-        btnFilterTR.setOnClickListener(v -> { currentFilter = "trends"; applyFilter(); });
 
         startPipeline();
     }
 
     private void startPipeline() {
         progressBar.setVisibility(View.VISIBLE);
-        allQueries.clear();
-        filteredQueries.clear();
-        seenQueries.clear();
+        suggestions.clear();
         youtubeSuggestions.clear();
+        risingQueriesMap.clear();
         adapter.notifyDataSetChanged();
         step1Count = 0;
         step2Count = 0;
@@ -104,7 +90,6 @@ public class MainActivity extends AppCompatActivity {
 
         statusText.setText("🎥 STEP 1: Fetching YouTube suggestions from " + keywordsToSearch.length + " keywords...");
 
-        // STEP 1: Get YouTube suggestions
         ExecutorService executor = Executors.newFixedThreadPool(12);
         for (String keyword : keywordsToSearch) {
             executor.submit(() -> fetchYouTubeSuggestions(keyword));
@@ -149,10 +134,10 @@ public class MainActivity extends AppCompatActivity {
                         body = body.substring(start, end + 1);
                         JSONArray arr = new JSONArray(body);
                         if (arr.length() < 2) { checkStep1Complete(); return; }
-                        JSONArray suggestions = arr.getJSONArray(1);
+                        JSONArray suggestionsArr = arr.getJSONArray(1);
                         
-                        for (int i = 0; i < suggestions.length(); i++) {
-                            Object item = suggestions.get(i);
+                        for (int i = 0; i < suggestionsArr.length(); i++) {
+                            Object item = suggestionsArr.get(i);
                             String query = (item instanceof JSONArray) ? ((JSONArray) item).getString(0) : item.toString();
                             query = query.toLowerCase().trim();
                             if (!query.isEmpty()) {
@@ -173,6 +158,7 @@ public class MainActivity extends AppCompatActivity {
             step1Complete = true;
             runOnUiThread(() -> {
                 statusText.setText("✅ STEP 1 Complete! Found " + youtubeSuggestions.size() + " YouTube suggestions. Starting STEP 2...");
+                populateSuggestionsList();
                 startStep2();
             });
         } else {
@@ -180,6 +166,16 @@ public class MainActivity extends AppCompatActivity {
                 statusText.setText("🎥 STEP 1: " + step1Count + "/" + KEYWORD_VARIATIONS.length + " keywords queried... " + youtubeSuggestions.size() + " suggestions so far");
             });
         }
+    }
+
+    private void populateSuggestionsList() {
+        runOnUiThread(() -> {
+            suggestions.clear();
+            for (String suggestion : youtubeSuggestions) {
+                suggestions.add(new SuggestionAdapter.SuggestionItem(suggestion));
+            }
+            adapter.notifyDataSetChanged();
+        });
     }
 
     private void startStep2() {
@@ -199,8 +195,6 @@ public class MainActivity extends AppCompatActivity {
                 keyword
             );
             String encodedPayload = URLEncoder.encode(jsonPayload, "UTF-8");
-            
-            // Use CORS proxy to fetch Google Trends data
             String trendsUrl = "https://trends.google.com/trends/api/explore?hl=en-US&tz=0&req=" + encodedPayload;
             String proxyUrl = "https://api.allorigins.win/get?url=" + URLEncoder.encode(trendsUrl, "UTF-8");
             
@@ -218,7 +212,6 @@ public class MainActivity extends AppCompatActivity {
                         JSONObject json = new JSONObject(body);
                         String contents = json.getString("contents");
                         
-                        // Strip Google's anti-XSSI prefix
                         if (contents.startsWith(")]}'\n")) {
                             contents = contents.substring(5);
                         }
@@ -227,31 +220,22 @@ public class MainActivity extends AppCompatActivity {
                         JSONObject defaultObj = root.getJSONObject("default");
                         JSONArray rankedList = defaultObj.getJSONArray("rankedList");
                         
-                        // Index 1 is RISING queries
                         if (rankedList.length() > 1) {
                             JSONObject risingObj = rankedList.getJSONObject(1);
                             JSONArray rankedKeywords = risingObj.getJSONArray("rankedKeyword");
                             
+                            List<RisingQueryAdapter.RisingItem> risingItems = new ArrayList<>();
                             for (int i = 0; i < rankedKeywords.length(); i++) {
                                 JSONObject kw = rankedKeywords.getJSONObject(i);
                                 String q = kw.getString("query");
                                 String interest = kw.optString("value", "0");
                                 String percent = kw.optString("formattedValue", "+0%");
-                                
-                                String fullQuery = keyword + " → " + q;
-                                if (seenQueries.contains(fullQuery)) continue;
-                                seenQueries.add(fullQuery);
-                                
-                                QueryAdapter.QueryItem qi = new QueryAdapter.QueryItem(
-                                    fullQuery, interest, percent, "trends"
-                                );
-                                
-                                runOnUiThread(() -> {
-                                    allQueries.add(qi);
-                                    step2Count++;
-                                    sortAndFilter();
-                                });
+                                risingItems.add(new RisingQueryAdapter.RisingItem(q, interest, percent));
                             }
+                            
+                            risingQueriesMap.put(keyword, risingItems);
+                            
+                            runOnUiThread(() -> updateSuggestionWithRising(keyword, risingItems));
                         }
                     } catch (Exception e) {} finally { checkStep2Complete(); }
                 }
@@ -259,67 +243,74 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) { checkStep2Complete(); }
     }
 
-    private synchronized void checkStep2Complete() {
-        step2Count++;
-        runOnUiThread(() -> {
-            statusText.setText("📈 STEP 2: " + step2Count + "/" + youtubeSuggestions.size() + " YouTube suggestions searched in Google Trends... " + allQueries.size() + " rising queries found");
-            if (step2Count >= youtubeSuggestions.size()) {
-                progressBar.setVisibility(View.GONE);
-                statusText.setText("✅ Pipeline Complete! Found " + allQueries.size() + " rising queries from " + youtubeSuggestions.size() + " YouTube suggestions");
-            }
-        });
-    }
-
-    private void sortAndFilter() {
-        allQueries.sort((a, b) -> {
-            try {
-                String aVal = a.percent.replace("+", "").replace("%", "").replace(",", "");
-                String bVal = b.percent.replace("+", "").replace("%", "").replace(",", "");
-                if (aVal.equals("Breakout")) return -1;
-                if (bVal.equals("Breakout")) return 1;
-                int aInt = Integer.parseInt(aVal);
-                int bInt = Integer.parseInt(bVal);
-                return bInt - aInt;
-            } catch (Exception e) {
-                return 0;
-            }
-        });
-        applyFilter();
-    }
-
-    private void applyFilter() {
-        filteredQueries.clear();
-        for (QueryAdapter.QueryItem item : allQueries) {
-            if ("all".equals(currentFilter) || currentFilter.equals(item.source)) {
-                filteredQueries.add(item);
+    private void updateSuggestionWithRising(String keyword, List<RisingQueryAdapter.RisingItem> risingItems) {
+        for (SuggestionAdapter.SuggestionItem item : suggestions) {
+            if (item.suggestion.equals(keyword)) {
+                item.risingQueries.clear();
+                item.risingQueries.addAll(risingItems);
+                break;
             }
         }
         adapter.notifyDataSetChanged();
     }
 
-    private void copyAsTSV() {
-        if (filteredQueries.isEmpty()) { Toast.makeText(this, "No data", Toast.LENGTH_SHORT).show(); return; }
-        StringBuilder sb = new StringBuilder();
-        sb.append("YouTube Suggestion → Rising Query\tSearch Interest\tIncrease\n");
-        for (QueryAdapter.QueryItem q : filteredQueries) {
-            sb.append(q.query).append("\t").append(q.interest).append("\t").append(q.percent).append("\n");
-        }
-        copyToClipboard(sb.toString(), "TSV");
+    private synchronized void checkStep2Complete() {
+        step2Count++;
+        runOnUiThread(() -> {
+            statusText.setText("📈 STEP 2: " + step2Count + "/" + youtubeSuggestions.size() + " searched... " + risingQueriesMap.size() + " have rising queries");
+            if (step2Count >= youtubeSuggestions.size()) {
+                progressBar.setVisibility(View.GONE);
+                statusText.setText("✅ Complete! " + suggestions.size() + " suggestions, " + risingQueriesMap.size() + " with rising queries");
+            }
+        });
     }
 
-    private void copyAsCSV() {
-        if (filteredQueries.isEmpty()) { Toast.makeText(this, "No data", Toast.LENGTH_SHORT).show(); return; }
+    @Override
+    public void onCopyClick(SuggestionAdapter.SuggestionItem item) {
         StringBuilder sb = new StringBuilder();
-        sb.append("YouTube Suggestion → Rising Query,Search Interest,Increase\n");
-        for (QueryAdapter.QueryItem q : filteredQueries) {
-            sb.append("\"").append(q.query.replace("\"", "\"\"")).append("\",").append(q.interest).append(",").append(q.percent).append("\n");
+        sb.append("YouTube Suggestion: ").append(item.suggestion).append("\n\n");
+        sb.append("Rising Queries:\n");
+        
+        if (item.risingQueries.isEmpty()) {
+            sb.append("(No rising queries found)");
+        } else {
+            sb.append("Query\tInterest\tIncrease\n");
+            for (RisingQueryAdapter.RisingItem rq : item.risingQueries) {
+                sb.append(rq.query).append("\t").append(rq.interest).append("\t").append(rq.percent).append("\n");
+            }
         }
-        copyToClipboard(sb.toString(), "CSV");
-    }
-
-    private void copyToClipboard(String text, String format) {
+        
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(android.content.ClipData.newPlainText(format.toLowerCase(), text));
-        Toast.makeText(this, "📋 Copied " + filteredQueries.size() + " rising queries!", Toast.LENGTH_SHORT).show();
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("suggestion", sb.toString()));
+        Toast.makeText(this, "📋 Copied: " + item.suggestion, Toast.LENGTH_SHORT).show();
+    }
+
+    private void copyAll() {
+        if (suggestions.isEmpty()) {
+            Toast.makeText(this, "No data", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        StringBuilder sb = new StringBuilder();
+        for (SuggestionAdapter.SuggestionItem item : suggestions) {
+            sb.append("═══════════════════════════════════\n");
+            sb.append("YouTube Suggestion: ").append(item.suggestion).append("\n");
+            sb.append("═══════════════════════════════════\n");
+            
+            if (item.risingQueries.isEmpty()) {
+                sb.append("(No rising queries found)\n\n");
+            } else {
+                sb.append("Rising Queries:\n");
+                sb.append("Query\tInterest\tIncrease\n");
+                for (RisingQueryAdapter.RisingItem rq : item.risingQueries) {
+                    sb.append(rq.query).append("\t").append(rq.interest).append("\t").append(rq.percent).append("\n");
+                }
+                sb.append("\n");
+            }
+        }
+        
+        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("all", sb.toString()));
+        Toast.makeText(this, "📋 Copied all " + suggestions.size() + " suggestions!", Toast.LENGTH_SHORT).show();
     }
 }
