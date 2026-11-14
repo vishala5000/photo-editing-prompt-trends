@@ -6,35 +6,77 @@
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal" android:gravity="center_vertical" android:paddingBottom="4dp">
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="🎥📈" android:textSize="22sp"/>
+            android:text="🌍" android:textSize="22sp"/>
         <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-            android:text=" YouTube → Trends Finder" android:textSize="18sp" android:textStyle="bold"
+            android:text=" Universal Niche Finder" android:textSize="18sp" android:textStyle="bold"
             android:textColor="#1a1a1a"/>
     </LinearLayout>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Click any suggestion to expand rising queries"
+        android:text="Enter ANY niche → Get YouTube suggestions → Google Trends rising queries"
         android:textSize="11sp" android:textColor="#666" android:paddingBottom="8dp"/>
 
-    <EditText android:id="@+id/etSearch"
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:hint="🔍 Custom keyword (leave empty for all 40 variations)"
-        android:padding="10dp" android:background="@android:drawable/edit_text"
-        android:textSize="13sp" android:layout_marginBottom="6dp"/>
+    <!-- Prominent Niche Input -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:layout_marginBottom="6dp">
+        <EditText android:id="@+id/etSearch"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:hint="🎯 Enter ANY niche (e.g., cooking, fitness, gaming, travel)"
+            android:padding="12dp" android:background="@android:drawable/edit_text"
+            android:textSize="14sp" android:textStyle="bold"/>
+        <Button android:id="@+id/btnRefresh" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="🚀 GO" android:textSize="12sp"
+            android:layout_marginStart="4dp" android:backgroundTint="#1976D2"/>
+    </LinearLayout>
+
+    <!-- Quick Preset Buttons -->
+    <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:scrollbars="none" android:layout_marginBottom="6dp">
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btnPreset1" android:layout_width="wrap_content"
+                android:layout_height="32dp" android:text="📸 photo editing" android:textSize="10sp"
+                android:layout_marginEnd="4dp" android:backgroundTint="#E3F2FD"/>
+            <Button android:id="@+id/btnPreset2" android:layout_width="wrap_content"
+                android:layout_height="32dp" android:text="🍳 cooking" android:textSize="10sp"
+                android:layout_marginEnd="4dp" android:backgroundTint="#E3F2FD"/>
+            <Button android:id="@+id/btnPreset3" android:layout_width="wrap_content"
+                android:layout_height="32dp" android:text="💪 fitness" android:textSize="10sp"
+                android:layout_marginEnd="4dp" android:backgroundTint="#E3F2FD"/>
+            <Button android:id="@+id/btnPreset4" android:layout_width="wrap_content"
+                android:layout_height="32dp" android:text="🎮 gaming" android:textSize="10sp"
+                android:layout_marginEnd="4dp" android:backgroundTint="#E3F2FD"/>
+            <Button android:id="@+id/btnPreset5" android:layout_width="wrap_content"
+                android:layout_height="32dp" android:text="✈️ travel" android:textSize="10sp"
+                android:layout_marginEnd="4dp" android:backgroundTint="#E3F2FD"/>
+            <Button android:id="@+id/btnPreset6" android:layout_width="wrap_content"
+                android:layout_height="32dp" android:text="💄 makeup" android:textSize="10sp"
+                android:layout_marginEnd="4dp" android:backgroundTint="#E3F2FD"/>
+            <Button android:id="@+id/btnPreset7" android:layout_width="wrap_content"
+                android:layout_height="32dp" android:text="🎨 art" android:textSize="10sp"
+                android:backgroundTint="#E3F2FD"/>
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- Active Niche Display -->
+    <TextView android:id="@+id/tvActiveNiche" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="🎯 Active Niche: photo editing prompt"
+        android:textSize="12sp" android:textStyle="bold" android:textColor="#1976D2"
+        android:padding="8dp" android:background="#E3F2FD" android:layout_marginBottom="4dp"/>
 
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal">
-        <Button android:id="@+id/btnRefresh" android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="wrap_content" android:text="🚀 Fetch All" android:textSize="12sp"
-            android:layout_marginEnd="4dp" android:backgroundTint="#1976D2"/>
         <Button android:id="@+id/btnCopyAll" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content" android:text="📋 Copy All" android:textSize="12sp"
+            android:layout_marginEnd="4dp"/>
+        <Button android:id="@+id/btnExpandAll" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="📂 Expand All" android:textSize="12sp"
             android:layout_marginStart="4dp"/>
     </LinearLayout>
 
     <TextView android:id="@+id/statusText" android:layout_width="match_parent"
-        android:layout_height="wrap_content" android:text="Tap 'Fetch All' to start..."
+        android:layout_height="wrap_content" android:text="Ready. Enter a niche and tap GO!"
         android:textSize="11sp" android:textColor="#444" android:padding="6dp"
-        android:background="#E3F2FD" android:layout_marginTop="4dp" android:layout_marginBottom="4dp"/>
+        android:background="#FFF3E0" android:layout_marginTop="4dp" android:layout_marginBottom="4dp"/>
 
     <ProgressBar android:id="@+id/progressBar" android:layout_width="wrap_content"
         android:layout_height="wrap_content" android:layout_gravity="center" android:visibility="gone"/>
