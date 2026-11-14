@@ -1,0 +1,64 @@
+name: Build & Auto-Sign APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Auto-Generate Keystore & Sign APK
+        run: |
+          echo "🔑 Generating temporary keystore..."
+          keytool -genkeypair -v -keystore release-key.jks \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias release -storepass autoSign123 -keypass autoSign123 \
+            -dname "CN=AutoSign, OU=Dev, O=PhotoApp, L=Global, ST=Cloud, C=US"
+          
+          echo "📝 Finding APK..."
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | grep -v "unaligned" | head -n 1)
+          echo "Found APK: $APK"
+          
+          echo "✍️ Signing APK with apksigner..."
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+            --ks release-key.jks \
+            --ks-pass pass:autoSign123 \
+            --ks-key-alias release \
+            --key-pass pass:autoSign123 \
+            "$APK"
+            
+          echo "✅ APK Signed Successfully!"
+          mv "$APK" app/build/outputs/apk/release/PhotoEditingPrompt-v1.0.apk
+
+      - name: Upload Signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhotoEditingPrompt-Signed-APK
+          path: app/build/outputs/apk/release/PhotoEditingPrompt-v1.0.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Photo Editing Prompt v1.0.${{ github.run_number }}
+          files: app/build/outputs/apk/release/PhotoEditingPrompt-v1.0.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
