@@ -19,19 +19,25 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private List<SuggestionAdapter.SuggestionItem> suggestions = new ArrayList<>();
     private SuggestionAdapter adapter;
     private ProgressBar progressBar;
-    private TextView statusText;
+    private TextView statusText, tvActiveNiche;
     private EditText etSearch;
     private OkHttpClient client = new OkHttpClient();
     private Set<String> youtubeSuggestions = new HashSet<>();
     private Map<String, List<RisingQueryAdapter.RisingItem>> risingQueriesMap = new ConcurrentHashMap<>();
-    private List<String> dynamicSeeds = new ArrayList<>();
-    private int step0Count = 0, step1Count = 0, step2Count = 0;
-    private boolean step0Complete = false, step1Complete = false;
+    private int step1Count = 0, step2Count = 0, totalStep1 = 0;
+    private boolean step1Complete = false;
+    private String currentNiche = "photo editing prompt";
+    private boolean allExpanded = false;
 
-    // DYNAMIC seeds: These are combined with live trending topics
-    private final String[] BASE_PHRASES = {
-        "photo editing prompt", "photo editing ideas", "portrait editing prompt",
-        "face retouching prompt", "selfie editing prompt", "couple photo prompt"
+    // UNIVERSAL suffixes that work for ANY niche
+    private final String[] UNIVERSAL_SUFFIXES = {
+        "", " for beginners", " tutorial", " tips", " ideas", " 2026",
+        " easy", " advanced", " at home", " professional", " viral",
+        " trending", " how to", " best", " top", " step by step",
+        " for youtube", " aesthetic", " cinematic", " creative",
+        " for boys", " for girls", " for couples", " for kids",
+        " for adults", " for seniors", " quick", " simple",
+        " no equipment", " budget", " premium", " free"
     };
 
     @Override
@@ -42,130 +48,106 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         recyclerView = findViewById(R.id.recyclerView);
         progressBar = findViewById(R.id.progressBar);
         statusText = findViewById(R.id.statusText);
+        tvActiveNiche = findViewById(R.id.tvActiveNiche);
         etSearch = findViewById(R.id.etSearch);
         SwipeRefreshLayout swipe = findViewById(R.id.swipeRefresh);
         Button btnCopyAll = findViewById(R.id.btnCopyAll);
+        Button btnExpandAll = findViewById(R.id.btnExpandAll);
         Button btnRefresh = findViewById(R.id.btnRefresh);
+
+        // Preset buttons
+        setupPresetButton(R.id.btnPreset1, "photo editing prompt");
+        setupPresetButton(R.id.btnPreset2, "cooking recipes");
+        setupPresetButton(R.id.btnPreset3, "fitness workout");
+        setupPresetButton(R.id.btnPreset4, "gaming");
+        setupPresetButton(R.id.btnPreset5, "travel vlog");
+        setupPresetButton(R.id.btnPreset6, "makeup tutorial");
+        setupPresetButton(R.id.btnPreset7, "digital art");
 
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         adapter = new SuggestionAdapter(suggestions, this);
         recyclerView.setAdapter(adapter);
 
         btnCopyAll.setOnClickListener(v -> copyAll());
+        btnExpandAll.setOnClickListener(v -> toggleExpandAll());
         btnRefresh.setOnClickListener(v -> startPipeline());
         swipe.setOnRefreshListener(() -> { startPipeline(); swipe.setRefreshing(false); });
 
+        // Start with default niche
+        etSearch.setText("photo editing prompt");
         startPipeline();
     }
 
+    private void setupPresetButton(int id, String niche) {
+        findViewById(id).setOnClickListener(v -> {
+            etSearch.setText(niche);
+            startPipeline();
+        });
+    }
+
+    private void toggleExpandAll() {
+        allExpanded = !allExpanded;
+        for (SuggestionAdapter.SuggestionItem item : suggestions) {
+            item.isExpanded = allExpanded;
+        }
+        adapter.notifyDataSetChanged();
+        Toast.makeText(this, allExpanded ? "📂 All expanded" : "📁 All collapsed", Toast.LENGTH_SHORT).show();
+    }
+
     private void startPipeline() {
+        String niche = etSearch.getText().toString().trim();
+        if (niche.isEmpty()) {
+            Toast.makeText(this, "⚠️ Please enter a niche keyword", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        currentNiche = niche;
+        tvActiveNiche.setText("🎯 Active Niche: " + currentNiche);
+        
         progressBar.setVisibility(View.VISIBLE);
         suggestions.clear();
         youtubeSuggestions.clear();
         risingQueriesMap.clear();
-        dynamicSeeds.clear();
         adapter.notifyDataSetChanged();
-        step0Count = 0; step1Count = 0; step2Count = 0;
-        step0Complete = false; step1Complete = false;
+        step1Count = 0;
+        step2Count = 0;
+        step1Complete = false;
+        allExpanded = false;
 
-        statusText.setText("🌐 STEP 0: Fetching today's trending topics as dynamic seeds...");
+        // Generate universal keyword variations
+        String[] keywordsToSearch = generateUniversalVariations(niche);
+        totalStep1 = keywordsToSearch.length;
 
-        // STEP 0: Get REAL trending topics from Google Trends RSS (changes daily!)
-        fetchDynamicSeeds();
-    }
-
-    private void fetchDynamicSeeds() {
-        try {
-            String trendsUrl = "https://trends.google.com/trending/rss?geo=US&hl=en-US";
-            String proxyUrl = "https://api.allorigins.win/get?url=" + URLEncoder.encode(trendsUrl, "UTF-8");
-            
-            Request request = new Request.Builder().url(proxyUrl)
-                .header("User-Agent", "Mozilla/5.0")
-                .build();
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) { useFallbackSeeds(); }
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    try {
-                        if (!response.isSuccessful()) { useFallbackSeeds(); return; }
-                        String body = response.body().string();
-                        JSONObject json = new JSONObject(body);
-                        String contents = json.getString("contents");
-                        
-                        String[] items = contents.split("<item>");
-                        for (int i = 1; i < Math.min(items.length, 50); i++) {
-                            String item = items[i];
-                            int titleStart = item.indexOf("<title>") + 7;
-                            int titleEnd = item.indexOf("</title>");
-                            if (titleStart > 7 && titleEnd > titleStart) {
-                                String title = item.substring(titleStart, titleEnd).toLowerCase().trim();
-                                // Only include photo/people related trending topics
-                                if (title.contains("photo") || title.contains("edit") || 
-                                    title.contains("portrait") || title.contains("selfie") ||
-                                    title.contains("ai") || title.contains("image") ||
-                                    title.contains("face") || title.contains("model") ||
-                                    title.contains("celebrity") || title.contains("actor") ||
-                                    title.contains("actress") || title.contains("singer")) {
-                                    dynamicSeeds.add(title);
-                                }
-                            }
-                        }
-                        
-                        runOnUiThread(() -> {
-                            step0Complete = true;
-                            statusText.setText("✅ Found " + dynamicSeeds.size() + " trending topics. Starting STEP 1...");
-                            startStep1();
-                        });
-                    } catch (Exception e) { useFallbackSeeds(); }
-                }
-            });
-        } catch (Exception e) { useFallbackSeeds(); }
-    }
-
-    private void useFallbackSeeds() {
-        // If trending fetch fails, use base phrases + custom input
-        String custom = etSearch.getText().toString().trim();
-        if (!custom.isEmpty()) {
-            dynamicSeeds.add(custom);
-        }
-        for (String base : BASE_PHRASES) {
-            dynamicSeeds.add(base);
-        }
-        runOnUiThread(() -> {
-            step0Complete = true;
-            statusText.setText("✅ Using " + dynamicSeeds.size() + " seed phrases. Starting STEP 1...");
-            startStep1();
-        });
-    }
-
-    private void startStep1() {
-        // Combine dynamic seeds with base phrases
-        List<String> allKeywords = new ArrayList<>();
-        String custom = etSearch.getText().toString().trim();
-        if (!custom.isEmpty()) allKeywords.add(custom);
-        
-        for (String seed : dynamicSeeds) {
-            allKeywords.add(seed + " editing prompt");
-            allKeywords.add("photo editing prompt for " + seed);
-        }
-        for (String base : BASE_PHRASES) {
-            allKeywords.add(base);
-            allKeywords.add(base + " for boy");
-            allKeywords.add(base + " for girl");
-            allKeywords.add(base + " for couple");
-        }
-
-        statusText.setText("🎥 STEP 1: Fetching YouTube suggestions from " + allKeywords.size() + " dynamic keywords...");
+        statusText.setText("🎥 STEP 1: Fetching YouTube suggestions for \"" + niche + "\" (" + totalStep1 + " variations)...");
 
         ExecutorService executor = Executors.newFixedThreadPool(12);
-        for (String keyword : allKeywords) {
-            executor.submit(() -> fetchYouTubeSuggestions(keyword, allKeywords.size()));
+        for (String keyword : keywordsToSearch) {
+            executor.submit(() -> fetchYouTubeSuggestions(keyword));
         }
         executor.shutdown();
     }
 
-    private void fetchYouTubeSuggestions(String keyword, int total) {
+    private String[] generateUniversalVariations(String niche) {
+        List<String> variations = new ArrayList<>();
+        variations.add(niche); // The base keyword itself
+        
+        for (String suffix : UNIVERSAL_SUFFIXES) {
+            variations.add(niche + suffix);
+        }
+        
+        // Add "how to" variations
+        variations.add("how to " + niche);
+        variations.add("best " + niche);
+        variations.add(niche + " ideas");
+        variations.add(niche + " tips");
+        variations.add(niche + " tricks");
+        variations.add(niche + " hacks");
+        variations.add(niche + " challenge");
+        
+        return variations.toArray(new String[0]);
+    }
+
+    private void fetchYouTubeSuggestions(String keyword) {
         try {
             String url = "http://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=" + 
                 URLEncoder.encode(keyword, "UTF-8") + "&hl=en-US";
@@ -174,18 +156,18 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                 .build();
             client.newCall(request).enqueue(new Callback() {
                 @Override
-                public void onFailure(Call call, IOException e) { checkStep1Complete(total); }
+                public void onFailure(Call call, IOException e) { checkStep1Complete(); }
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     try {
-                        if (!response.isSuccessful()) { checkStep1Complete(total); return; }
+                        if (!response.isSuccessful()) { checkStep1Complete(); return; }
                         String body = response.body().string();
                         int start = body.indexOf("[");
                         int end = body.lastIndexOf("]");
-                        if (start == -1 || end == -1) { checkStep1Complete(total); return; }
+                        if (start == -1 || end == -1) { checkStep1Complete(); return; }
                         body = body.substring(start, end + 1);
                         JSONArray arr = new JSONArray(body);
-                        if (arr.length() < 2) { checkStep1Complete(total); return; }
+                        if (arr.length() < 2) { checkStep1Complete(); return; }
                         JSONArray suggestionsArr = arr.getJSONArray(1);
                         
                         for (int i = 0; i < suggestionsArr.length(); i++) {
@@ -198,24 +180,24 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                                 }
                             }
                         }
-                    } catch (Exception e) {} finally { checkStep1Complete(total); }
+                    } catch (Exception e) {} finally { checkStep1Complete(); }
                 }
             });
-        } catch (Exception e) { checkStep1Complete(total); }
+        } catch (Exception e) { checkStep1Complete(); }
     }
 
-    private synchronized void checkStep1Complete(int total) {
+    private synchronized void checkStep1Complete() {
         step1Count++;
-        if (step1Count >= total && !step1Complete) {
+        if (step1Count >= totalStep1 && !step1Complete) {
             step1Complete = true;
             runOnUiThread(() -> {
-                statusText.setText("✅ STEP 1 Complete! Found " + youtubeSuggestions.size() + " YouTube suggestions. Starting STEP 2...");
+                statusText.setText("✅ STEP 1 Complete! Found " + youtubeSuggestions.size() + " YouTube suggestions for \"" + currentNiche + "\". Starting STEP 2...");
                 populateSuggestionsList();
                 startStep2();
             });
         } else {
             runOnUiThread(() -> {
-                statusText.setText("🎥 STEP 1: " + step1Count + "/" + total + " | " + youtubeSuggestions.size() + " suggestions");
+                statusText.setText("🎥 STEP 1: " + step1Count + "/" + totalStep1 + " | Found " + youtubeSuggestions.size() + " suggestions for \"" + currentNiche + "\"");
             });
         }
     }
@@ -306,10 +288,10 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private synchronized void checkStep2Complete() {
         step2Count++;
         runOnUiThread(() -> {
-            statusText.setText("📈 STEP 2: " + step2Count + "/" + youtubeSuggestions.size() + " | " + risingQueriesMap.size() + " with rising queries");
+            statusText.setText("📈 STEP 2: " + step2Count + "/" + youtubeSuggestions.size() + " | \"" + currentNiche + "\" | " + risingQueriesMap.size() + " with rising queries");
             if (step2Count >= youtubeSuggestions.size()) {
                 progressBar.setVisibility(View.GONE);
-                statusText.setText("✅ Complete! " + suggestions.size() + " suggestions, " + risingQueriesMap.size() + " with rising queries");
+                statusText.setText("✅ Complete! Niche: \"" + currentNiche + "\" | " + suggestions.size() + " suggestions, " + risingQueriesMap.size() + " with rising queries");
             }
         });
     }
@@ -317,8 +299,9 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     @Override
     public void onCopyClick(SuggestionAdapter.SuggestionItem item) {
         StringBuilder sb = new StringBuilder();
-        sb.append("YouTube Suggestion: ").append(item.suggestion).append("\n\n");
-        sb.append("Rising Queries:\n");
+        sb.append("🎯 Niche: ").append(currentNiche).append("\n");
+        sb.append("🎥 YouTube Suggestion: ").append(item.suggestion).append("\n\n");
+        sb.append("📈 Rising Queries (Past 7 Days):\n");
         
         if (item.risingQueries.isEmpty()) {
             sb.append("(No rising queries found)");
@@ -338,15 +321,19 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         if (suggestions.isEmpty()) { Toast.makeText(this, "No data", Toast.LENGTH_SHORT).show(); return; }
         
         StringBuilder sb = new StringBuilder();
+        sb.append("═══════════════════════════════════════\n");
+        sb.append("🎯 NICHE: ").append(currentNiche).append("\n");
+        sb.append("═══════════════════════════════════════\n\n");
+        
         for (SuggestionAdapter.SuggestionItem item : suggestions) {
-            sb.append("═══════════════════════════════════\n");
-            sb.append("YouTube Suggestion: ").append(item.suggestion).append("\n");
-            sb.append("═══════════════════════════════════\n");
+            sb.append("───────────────────────────────────────\n");
+            sb.append("🎥 YouTube Suggestion: ").append(item.suggestion).append("\n");
+            sb.append("───────────────────────────────────────\n");
             
             if (item.risingQueries.isEmpty()) {
                 sb.append("(No rising queries found)\n\n");
             } else {
-                sb.append("Rising Queries:\n");
+                sb.append("📈 Rising Queries:\n");
                 sb.append("Query\tInterest\tIncrease\n");
                 for (RisingQueryAdapter.RisingItem rq : item.risingQueries) {
                     sb.append(rq.query).append("\t").append(rq.interest).append("\t").append(rq.percent).append("\n");
@@ -357,6 +344,6 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cm.setPrimaryClip(android.content.ClipData.newPlainText("all", sb.toString()));
-        Toast.makeText(this, "📋 Copied all " + suggestions.size() + " suggestions!", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "📋 Copied all " + suggestions.size() + " suggestions for \"" + currentNiche + "\"!", Toast.LENGTH_SHORT).show();
     }
 }
