@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent"
-    android:orientation="vertical" android:padding="16dp" android:background="#FAFAFA">
+    android:orientation="vertical" android:padding="12dp" android:background="#FAFAFA">
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="📸 Photo Editing Prompt" android:textSize="24sp" android:textStyle="bold"
-        android:textColor="#1a1a1a" android:paddingBottom="4dp"/>
+        android:text="Rising queries" android:textSize="20sp" android:textStyle="bold"
+        android:textColor="#1a1a1a" android:paddingBottom="2dp"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Google Trends • Rising Queries • Global • Last Week • YouTube"
+        android:text="Worldwide · Past week · YouTube"
         android:textSize="13sp" android:textColor="#666" android:paddingBottom="12dp"/>
 
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -20,7 +20,19 @@
 
     <TextView android:id="@+id/statusText" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:text="Tap Refresh to load..."
-        android:textSize="13sp" android:textColor="#444" android:padding="8dp"/>
+        android:textSize="13sp" android:textColor="#444" android:padding="6dp"/>
+
+    <!-- Table Headers -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:padding="12dp" android:background="#E0E0E0"
+        android:layout_marginTop="4dp" android:layout_marginBottom="4dp">
+        <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:text="Query" android:textStyle="bold" android:textSize="13sp" android:textColor="#333"/>
+        <TextView android:layout_width="40dp" android:layout_height="wrap_content"
+            android:text="Int." android:gravity="center" android:textStyle="bold" android:textSize="13sp" android:textColor="#333"/>
+        <TextView android:layout_width="60dp" android:layout_height="wrap_content"
+            android:text="Increase" android:gravity="end" android:textStyle="bold" android:textSize="13sp" android:textColor="#333"/>
+    </LinearLayout>
 
     <ProgressBar android:id="@+id/progressBar" android:layout_width="wrap_content"
         android:layout_height="wrap_content" android:layout_gravity="center" android:visibility="gone"/>
@@ -30,6 +42,6 @@
         android:layout_height="0dp" android:layout_weight="1">
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/recyclerView" android:layout_width="match_parent"
-            android:layout_height="match_parent"/>
+            android:layout_height="match_parent" android:background="#FFFFFF"/>
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 </LinearLayout>
