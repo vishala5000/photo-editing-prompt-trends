@@ -18,15 +18,15 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Setup Gradle (no gradlew needed)
+        uses: gradle/actions/setup-gradle@v3
 
-      - name: Build Release APK
-        run: ./gradlew assembleRelease --no-daemon
+      - name: Build Release APK (using gradle directly)
+        run: gradle assembleRelease --no-daemon
 
       - name: Auto-Generate Keystore & Sign APK
         run: |
-          echo "🔑 Generating temporary keystore..."
+          echo "🔑 Generating keystore..."
           keytool -genkeypair -v -keystore release-key.jks \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -alias release -storepass autoSign123 -keypass autoSign123 \
@@ -34,18 +34,18 @@ jobs:
           
           echo "📝 Finding APK..."
           APK=$(find app/build/outputs/apk/release -name "*.apk" | grep -v "unaligned" | head -n 1)
-          echo "Found APK: $APK"
+          echo "Found: $APK"
           
-          echo "✍️ Signing APK with apksigner..."
+          echo "✍️ Signing with apksigner..."
           $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
             --ks release-key.jks \
             --ks-pass pass:autoSign123 \
             --ks-key-alias release \
             --key-pass pass:autoSign123 \
             "$APK"
-            
-          echo "✅ APK Signed Successfully!"
+          
           mv "$APK" app/build/outputs/apk/release/PhotoEditingPrompt-v1.0.apk
+          echo "✅ Signed!"
 
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
