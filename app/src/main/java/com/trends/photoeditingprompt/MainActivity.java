@@ -7,16 +7,14 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.*;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import okhttp3.*;
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
-import org.jsoup.select.Elements;
+import org.json.*;
 import java.io.IOException;
+import java.net.URLEncoder;
 import java.util.*;
 
 public class MainActivity extends AppCompatActivity {
     private RecyclerView recyclerView;
-    private List<String> queries = new ArrayList<>();
+    private List<QueryAdapter.QueryItem> queries = new ArrayList<>();
     private QueryAdapter adapter;
     private ProgressBar progressBar;
     private TextView statusText;
@@ -47,81 +45,103 @@ public class MainActivity extends AppCompatActivity {
 
     private void fetchTrends() {
         progressBar.setVisibility(View.VISIBLE);
-        statusText.setText("🔍 Fetching Google Trends - Rising Queries (Global, Last Week)...");
+        statusText.setText("🔍 Fetching YouTube Rising Queries: 'photo editing prompt' (Global, 7 Days)...");
         queries.clear();
         adapter.notifyDataSetChanged();
 
-        String url = "https://trends.google.com/trending/rss?geo=&hl=en-US";
-        Request request = new Request.Builder().url(url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .build();
+        try {
+            String keyword = "photo editing prompt";
+            String jsonPayload = String.format(
+                "{\"comparisonItem\":[{\"keyword\":\"%s\",\"geo\":\"\",\"time\":\"now 7-d\"}],\"category\":0,\"property\":\"youtube\"}",
+                keyword
+            );
+            String encodedPayload = URLEncoder.encode(jsonPayload, "UTF-8");
+            String url = "https://trends.google.com/trends/api/explore?hl=en-US&tz=0&req=" + encodedPayload;
 
-        client.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                runOnUiThread(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    statusText.setText("⚠️ Offline mode: Showing seed keywords. Error: " + e.getMessage());
-                    loadFallbackData();
-                });
-            }
+            Request request = new Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Accept", "application/json")
+                .build();
 
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                if (!response.isSuccessful()) {
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
                     runOnUiThread(() -> {
-                        statusText.setText("⚠️ HTTP " + response.code() + ". Showing seed keywords.");
+                        progressBar.setVisibility(View.GONE);
+                        statusText.setText("⚠️ Network error. Showing fallback data.");
                         loadFallbackData();
                     });
-                    return;
                 }
-                String xml = response.body().string();
-                Document doc = Jsoup.parse(xml, "", org.jsoup.parser.Parser.xmlParser());
-                Elements items = doc.select("item");
 
-                final List<String> parsed = new ArrayList<>();
-                for (Element item : items) {
-                    String title = item.select("title").text();
-                    // Fixed: Jsoup select takes only ONE argument
-                    String traffic = item.select("approx_traffic").text(); 
-                    if (!title.isEmpty()) {
-                        String entry = title + (traffic.isEmpty() ? "" : " 🔥" + traffic);
-                        if (!parsed.contains(entry)) parsed.add(entry);
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    if (!response.isSuccessful()) {
+                        runOnUiThread(() -> {
+                            statusText.setText("⚠️ HTTP " + response.code() + ". Showing fallback data.");
+                            loadFallbackData();
+                        });
+                        return;
+                    }
+                    
+                    String body = response.body().string();
+                    // Strip Google's anti-XSSI prefix
+                    if (body.startsWith(")]}'\n")) {
+                        body = body.substring(5);
+                    }
+                    
+                    try {
+                        JSONObject root = new JSONObject(body);
+                        JSONObject defaultObj = root.getJSONObject("default");
+                        JSONArray rankedList = defaultObj.getJSONArray("rankedList");
+                        
+                        // Index 1 is RISING queries (Index 0 is TOP)
+                        JSONObject risingObj = rankedList.getJSONObject(1);
+                        JSONArray rankedKeywords = risingObj.getJSONArray("rankedKeyword");
+                        
+                        final List<QueryAdapter.QueryItem> parsed = new ArrayList<>();
+                        for (int i = 0; i < rankedKeywords.length(); i++) {
+                            JSONObject kw = rankedKeywords.getJSONObject(i);
+                            String q = kw.getString("query");
+                            String interest = kw.optString("value", "0"); // e.g., "12" or "Breakout"
+                            String percent = kw.optString("formattedValue", "+0%"); // e.g., "+250%"
+                            parsed.add(new QueryAdapter.QueryItem(q, interest, percent));
+                        }
+                        
+                        runOnUiThread(() -> {
+                            progressBar.setVisibility(View.GONE);
+                            queries.addAll(parsed);
+                            adapter.notifyDataSetChanged();
+                            statusText.setText("✅ Found " + parsed.size() + " rising queries (YouTube • Global • 7 Days)");
+                        });
+                    } catch (JSONException e) {
+                        runOnUiThread(() -> {
+                            statusText.setText("⚠️ Parse error. Showing fallback data.");
+                            loadFallbackData();
+                        });
                     }
                 }
-
-                runOnUiThread(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    queries.addAll(getSeedKeywords());
-                    queries.add("──────── LIVE RISING QUERIES ────────");
-                    queries.addAll(parsed.isEmpty() ? Collections.singletonList("No live data. Showing seeds.") : parsed);
-                    adapter.notifyDataSetChanged();
-                    statusText.setText("✅ Found " + parsed.size() + " rising queries (Global • Last Week)");
-                });
-            }
-        });
+            });
+        } catch (Exception e) {
+            loadFallbackData();
+        }
     }
 
     private void loadFallbackData() {
-        queries.addAll(getSeedKeywords());
+        progressBar.setVisibility(View.GONE);
+        queries.clear();
+        queries.add(new QueryAdapter.QueryItem("diwali chatgpt prompt", "5", "+250%"));
+        queries.add(new QueryAdapter.QueryItem("diwali prompt", "12", "+200%"));
+        queries.add(new QueryAdapter.QueryItem("ai diwali photo editing", "3", "+150%"));
+        queries.add(new QueryAdapter.QueryItem("chat gpt trend photo prompt", "3", "+80%"));
+        queries.add(new QueryAdapter.QueryItem("instagram photo editing", "7", "+10%"));
+        queries.add(new QueryAdapter.QueryItem("photo editing chatgpt", "94", "+4%"));
+        queries.add(new QueryAdapter.QueryItem("best prompt for photo editing", "1", "+3%"));
+        queries.add(new QueryAdapter.QueryItem("chatgpt prompt for photo editing", "14", "+3%"));
+        queries.add(new QueryAdapter.QueryItem("couple photo editing prompt", "17", "+2%"));
+        queries.add(new QueryAdapter.QueryItem("gemini ai photo editing", "9", "-3%"));
+        queries.add(new QueryAdapter.QueryItem("ai photo editing prompt", "36", "-10%"));
+        queries.add(new QueryAdapter.QueryItem("trending photo editing prompt", "22", "-4%"));
         adapter.notifyDataSetChanged();
-    }
-
-    private List<String> getSeedKeywords() {
-        return Arrays.asList(
-            "📸 photo editing prompt ideas",
-            "🤖 AI photo editing prompts",
-            "✨ best photo editing prompts 2026",
-            "🎨 midjourney photo editing prompt",
-            "🌊 stable diffusion photo prompt",
-            "🖌️ photoshop generative fill prompts",
-            "💡 lightroom AI edit prompts",
-            "📷 photo retouching prompt examples",
-            "🎞️ vintage photo editing prompt",
-            "🎬 cinematic photo editing prompt",
-            "👤 portrait editing AI prompt",
-            "🛍️ product photo editing prompt"
-        );
     }
 
     private void copyAll() {
@@ -130,9 +150,12 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         StringBuilder sb = new StringBuilder();
-        for (String q : queries) sb.append(q).append("\n");
+        sb.append("Query\tSearch Interest\tIncrease\n");
+        for (QueryAdapter.QueryItem q : queries) {
+            sb.append(q.query).append("\t").append(q.interest).append("\t").append(q.percent).append("\n");
+        }
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cm.setPrimaryClip(android.content.ClipData.newPlainText("queries", sb.toString()));
-        Toast.makeText(this, "📋 Copied " + queries.size() + " queries!", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "📋 Copied " + queries.size() + " queries to clipboard!", Toast.LENGTH_SHORT).show();
     }
 }
