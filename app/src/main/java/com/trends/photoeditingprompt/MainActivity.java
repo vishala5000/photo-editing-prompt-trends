@@ -203,7 +203,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
             String trendsUrl = "https://trends.google.com/trends/api/explore?hl=en-US&tz=0&req=" + encodedPayload;
             
             // PRIMARY RELIABLE PROXY
-            String proxyUrl = "https://corsproxy.io/?" + URLEncoder.encode(trendsUrl, "UTF-8");
+            String proxyUrl = "https://api.codetabs.com/v1/proxy/?quest=" + URLEncoder.encode(trendsUrl, "UTF-8");
             
             Request request = new Request.Builder().url(proxyUrl)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
