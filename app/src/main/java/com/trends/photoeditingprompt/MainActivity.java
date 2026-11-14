@@ -24,6 +24,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private EditText etSearch;
     private OkHttpClient client = new OkHttpClient();
     private Map<String, List<RisingQueryAdapter.RisingItem>> trendsDataMap = new ConcurrentHashMap<>();
+    private Map<String, String> errorMap = new ConcurrentHashMap<>();
     private AtomicInteger completedRequests = new AtomicInteger(0);
     private int totalRequests = 0;
     private boolean pipelineComplete = false;
@@ -85,6 +86,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         progressBar.setVisibility(View.VISIBLE);
         suggestions.clear();
         trendsDataMap.clear();
+        errorMap.clear();
         adapter.notifyDataSetChanged();
         completedRequests.set(0);
         pipelineComplete = false;
@@ -186,92 +188,14 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         totalRequests = liveSuggestions.size();
         ExecutorService executor = Executors.newFixedThreadPool(4);
         for (String suggestion : liveSuggestions) {
-            executor.submit(() -> fetchGoogleTrendsRising(suggestion));
+            executor.submit(() -> fetchGoogleTrendsRising(suggestion, 0));
         }
         executor.shutdown();
     }
 
-    private void fetchGoogleTrendsRising(String suggestion) {
-        try {
-            String jsonPayload = String.format(
-                "{\"comparisonItem\":[{\"keyword\":\"%s\",\"geo\":\"\",\"time\":\"now 7-d\"}],\"category\":0,\"property\":\"\"}",
-                suggestion
-            );
-            String encodedPayload = URLEncoder.encode(jsonPayload, "UTF-8");
-            String trendsUrl = "https://trends.google.com/trends/api/explore?hl=en-US&tz=0&req=" + encodedPayload;
-            
-            // Use multiple proxy options for reliability
-            String[] proxies = {
-                "https://api.allorigins.win/get?url=",
-                "https://corsproxy.io/?",
-                "https://api.codetabs.com/v1/proxy/?quest="
-            };
-            
-            // Try first proxy
-            String proxyUrl = proxies[0] + URLEncoder.encode(trendsUrl, "UTF-8");
-            
-            Request request = new Request.Builder().url(proxyUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .build();
-                
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) { 
-                    // Try backup proxy
-                    tryBackupProxy(suggestion, 1);
-                }
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    try {
-                        if (!response.isSuccessful()) {
-                            tryBackupProxy(suggestion, 1);
-                            return;
-                        }
-                        String body = response.body().string();
-                        JSONObject json = new JSONObject(body);
-                        String contents = json.getString("contents");
-                        
-                        if (contents.startsWith(")]}'\n")) {
-                            contents = contents.substring(5);
-                        }
-                        
-                        JSONObject root = new JSONObject(contents);
-                        JSONObject defaultObj = root.getJSONObject("default");
-                        JSONArray rankedList = defaultObj.getJSONArray("rankedList");
-                        
-                        if (rankedList.length() > 1) {
-                            JSONObject risingObj = rankedList.getJSONObject(1);
-                            JSONArray rankedKeywords = risingObj.getJSONArray("rankedKeyword");
-                            
-                            List<RisingQueryAdapter.RisingItem> realRisingItems = new ArrayList<>();
-                            int limit = Math.min(10, rankedKeywords.length());
-                            
-                            for (int i = 0; i < limit; i++) {
-                                JSONObject kw = rankedKeywords.getJSONObject(i);
-                                String query = kw.getString("query");
-                                String interest = kw.optString("value", "0");
-                                String percent = kw.optString("formattedValue", "+0%");
-                                realRisingItems.add(new RisingQueryAdapter.RisingItem(query, interest, percent));
-                            }
-                            
-                            trendsDataMap.put(suggestion, realRisingItems);
-                            runOnUiThread(() -> updateUI(suggestion));
-                        }
-                    } catch (Exception e) {
-                        // Try backup proxy
-                        tryBackupProxy(suggestion, 1);
-                    } finally {
-                        incrementAndCheck();
-                    }
-                }
-            });
-        } catch (Exception e) {
-            incrementAndCheck();
-        }
-    }
-
-    private void tryBackupProxy(String suggestion, int proxyIndex) {
+    private void fetchGoogleTrendsRising(String suggestion, int proxyIndex) {
         if (proxyIndex >= 3) {
+            errorMap.put(suggestion, "All proxies blocked");
             incrementAndCheck();
             return;
         }
@@ -299,13 +223,13 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
             client.newCall(request).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) { 
-                    tryBackupProxy(suggestion, proxyIndex + 1);
+                    fetchGoogleTrendsRising(suggestion, proxyIndex + 1);
                 }
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     try {
                         if (!response.isSuccessful()) {
-                            tryBackupProxy(suggestion, proxyIndex + 1);
+                            fetchGoogleTrendsRising(suggestion, proxyIndex + 1);
                             return;
                         }
                         String body = response.body().string();
@@ -337,11 +261,14 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                             
                             trendsDataMap.put(suggestion, realRisingItems);
                             runOnUiThread(() -> updateUI(suggestion));
+                        } else {
+                            fetchGoogleTrendsRising(suggestion, proxyIndex + 1);
                         }
                     } catch (Exception e) {
-                        tryBackupProxy(suggestion, proxyIndex + 1);
+                        fetchGoogleTrendsRising(suggestion, proxyIndex + 1);
                     } finally {
-                        incrementAndCheck();
+                        // Only increment if we are NOT retrying
+                        // We handle increment in the retry logic implicitly by not calling it here if we retry
                     }
                 }
             });
@@ -350,6 +277,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         }
     }
 
+    // Helper to ensure we only increment when a request is truly finished (not retrying)
     private synchronized void incrementAndCheck() {
         int completed = completedRequests.incrementAndGet();
         runOnUiThread(() -> {
@@ -364,7 +292,12 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                     totalRising += list.size();
                 }
                 
-                statusText.setText("✅ Complete! " + suggestions.size() + " suggestions | " + totalRising + " real-time rising queries from Google Trends");
+                int errors = errorMap.size();
+                String statusMsg = "✅ Complete! " + suggestions.size() + " suggestions | " + totalRising + " real-time rising queries";
+                if (errors > 0) {
+                    statusMsg += " | ⚠️ " + errors + " failed (tap to see why)";
+                }
+                statusText.setText(statusMsg);
             }
         });
     }
@@ -375,10 +308,18 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                 List<RisingQueryAdapter.RisingItem> realItems = trendsDataMap.getOrDefault(suggestion, new ArrayList<>());
                 item.risingQueries.clear();
                 item.risingQueries.addAll(realItems);
+                
+                if (realItems.isEmpty() && errorMap.containsKey(suggestion)) {
+                    item.risingQueries.add(new RisingQueryAdapter.RisingItem(
+                        "⚠️ Error: " + errorMap.get(suggestion), "0", "N/A"
+                    ));
+                }
                 break;
             }
         }
         adapter.notifyDataSetChanged();
+        // Manually increment since we succeeded without retry
+        incrementAndCheck();
     }
 
     @Override
@@ -388,8 +329,8 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         sb.append("🎥 YouTube Suggestion: ").append(item.suggestion).append("\n\n");
         sb.append("📈 REAL Google Trends Rising Queries (Past 7 Days):\n");
         
-        if (item.risingQueries.isEmpty()) {
-            sb.append("(No rising queries found for this exact phrase)");
+        if (item.risingQueries.isEmpty() || item.risingQueries.get(0).query.startsWith("⚠️")) {
+            sb.append(item.risingQueries.isEmpty() ? "(No rising queries found)" : item.risingQueries.get(0).query);
         } else {
             sb.append("Query\tInterest\tIncrease\n");
             for (RisingQueryAdapter.RisingItem rq : item.risingQueries) {
@@ -415,8 +356,8 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
             sb.append("🎥 YouTube Suggestion: ").append(item.suggestion).append("\n");
             sb.append("───────────────────────────────────────\n");
             
-            if (item.risingQueries.isEmpty()) {
-                sb.append("(No rising queries found)\n\n");
+            if (item.risingQueries.isEmpty() || item.risingQueries.get(0).query.startsWith("⚠️")) {
+                sb.append(item.risingQueries.isEmpty() ? "(No rising queries found)\n\n" : item.risingQueries.get(0).query + "\n\n");
             } else {
                 sb.append("📈 REAL Google Trends Rising Queries:\n");
                 sb.append("Query\tInterest\tIncrease\n");
