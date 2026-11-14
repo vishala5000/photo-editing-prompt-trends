@@ -24,9 +24,13 @@ public class QueryAdapter extends RecyclerView.Adapter<QueryAdapter.VH> {
         holder.tv.setText(items.get(position));
         holder.tv.setTextSize(15);
         holder.tv.setPadding(24, 18, 24, 18);
+        
         if (items.get(position).contains("──")) {
-            holder.tv.setTextStyle(android.graphics.Typeface.BOLD);
-            holder.tv.setTextColor(0xFF1976D2);
+            holder.tv.setTypeface(null, android.graphics.Typeface.BOLD);
+            holder.tv.setTextColor(android.graphics.Color.parseColor("#1976D2"));
+        } else {
+            holder.tv.setTypeface(null, android.graphics.Typeface.NORMAL);
+            holder.tv.setTextColor(android.graphics.Color.parseColor("#212121"));
         }
     }
 
