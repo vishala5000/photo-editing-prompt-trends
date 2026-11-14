@@ -82,7 +82,8 @@ public class MainActivity extends AppCompatActivity {
                 final List<String> parsed = new ArrayList<>();
                 for (Element item : items) {
                     String title = item.select("title").text();
-                    String traffic = item.select("ht|approx_traffic", "http://www.google.com/trends/trends").text();
+                    // Fixed: Jsoup select takes only ONE argument
+                    String traffic = item.select("approx_traffic").text(); 
                     if (!title.isEmpty()) {
                         String entry = title + (traffic.isEmpty() ? "" : " 🔥" + traffic);
                         if (!parsed.contains(entry)) parsed.add(entry);
