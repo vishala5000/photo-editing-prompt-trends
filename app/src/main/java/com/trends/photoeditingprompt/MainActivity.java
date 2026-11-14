@@ -23,11 +23,11 @@ public class MainActivity extends AppCompatActivity {
     private TextView statusText;
     private EditText etSearch;
     private OkHttpClient client = new OkHttpClient();
-    private AtomicInteger completedRequests = new AtomicInteger(0);
-    private int totalRequests = 0;
     private Set<String> seenQueries = new HashSet<>();
+    private Set<String> youtubeSuggestions = new HashSet<>();
     private String currentFilter = "all";
-    private int ytCount = 0, ggCount = 0, trCount = 0;
+    private int step1Count = 0, step2Count = 0;
+    private boolean step1Complete = false;
 
     private final String[] KEYWORD_VARIATIONS = {
         "photo editing prompt for boy", "photo editing prompt for girl",
@@ -76,38 +76,38 @@ public class MainActivity extends AppCompatActivity {
 
         btnCopyTSV.setOnClickListener(v -> copyAsTSV());
         btnCopyCSV.setOnClickListener(v -> copyAsCSV());
-        btnRefresh.setOnClickListener(v -> fetchAllSources());
-        swipe.setOnRefreshListener(() -> { fetchAllSources(); swipe.setRefreshing(false); });
+        btnRefresh.setOnClickListener(v -> startPipeline());
+        swipe.setOnRefreshListener(() -> { startPipeline(); swipe.setRefreshing(false); });
         
         btnFilterAll.setOnClickListener(v -> { currentFilter = "all"; applyFilter(); });
         btnFilterYT.setOnClickListener(v -> { currentFilter = "youtube"; applyFilter(); });
         btnFilterGG.setOnClickListener(v -> { currentFilter = "google"; applyFilter(); });
         btnFilterTR.setOnClickListener(v -> { currentFilter = "trends"; applyFilter(); });
 
-        fetchAllSources();
+        startPipeline();
     }
 
-    private void fetchAllSources() {
+    private void startPipeline() {
         progressBar.setVisibility(View.VISIBLE);
         allQueries.clear();
         filteredQueries.clear();
         seenQueries.clear();
+        youtubeSuggestions.clear();
         adapter.notifyDataSetChanged();
-        completedRequests.set(0);
-        ytCount = 0; ggCount = 0; trCount = 0;
+        step1Count = 0;
+        step2Count = 0;
+        step1Complete = false;
 
         String customKeyword = etSearch.getText().toString().trim();
         String[] keywordsToSearch = customKeyword.isEmpty() ? 
             KEYWORD_VARIATIONS : generateHumanVariations(customKeyword);
 
-        totalRequests = keywordsToSearch.length * 3;
-        statusText.setText("🚀 Fetching REAL data: 3 sources × " + keywordsToSearch.length + " keywords...");
+        statusText.setText("🎥 STEP 1: Fetching YouTube suggestions from " + keywordsToSearch.length + " keywords...");
 
+        // STEP 1: Get YouTube suggestions
         ExecutorService executor = Executors.newFixedThreadPool(12);
         for (String keyword : keywordsToSearch) {
-            executor.submit(() -> fetchFromYouTube(keyword));
-            executor.submit(() -> fetchFromGoogle(keyword));
-            executor.submit(() -> fetchFromTrends(keyword));
+            executor.submit(() -> fetchYouTubeSuggestions(keyword));
         }
         executor.shutdown();
     }
@@ -128,7 +128,7 @@ public class MainActivity extends AppCompatActivity {
         return result;
     }
 
-    private void fetchFromYouTube(String keyword) {
+    private void fetchYouTubeSuggestions(String keyword) {
         try {
             String url = "http://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=" + 
                 URLEncoder.encode(keyword, "UTF-8") + "&hl=en-US";
@@ -137,173 +137,149 @@ public class MainActivity extends AppCompatActivity {
                 .build();
             client.newCall(request).enqueue(new Callback() {
                 @Override
-                public void onFailure(Call call, IOException e) { incrementCounter(); }
+                public void onFailure(Call call, IOException e) { checkStep1Complete(); }
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     try {
-                        if (!response.isSuccessful()) { incrementCounter(); return; }
+                        if (!response.isSuccessful()) { checkStep1Complete(); return; }
                         String body = response.body().string();
                         int start = body.indexOf("[");
                         int end = body.lastIndexOf("]");
-                        if (start == -1 || end == -1) { incrementCounter(); return; }
+                        if (start == -1 || end == -1) { checkStep1Complete(); return; }
                         body = body.substring(start, end + 1);
                         JSONArray arr = new JSONArray(body);
-                        if (arr.length() < 2) { incrementCounter(); return; }
+                        if (arr.length() < 2) { checkStep1Complete(); return; }
                         JSONArray suggestions = arr.getJSONArray(1);
                         
                         for (int i = 0; i < suggestions.length(); i++) {
                             Object item = suggestions.get(i);
                             String query = (item instanceof JSONArray) ? ((JSONArray) item).getString(0) : item.toString();
                             query = query.toLowerCase().trim();
-                            if (seenQueries.contains(query)) continue;
-                            seenQueries.add(query);
-                            
-                            // REAL data: Use position in suggestions as interest indicator
-                            int interest = Math.max(1, 100 - (i * 5));
-                            String percentStr = "N/A"; // YouTube doesn't provide % data
-                            
-                            QueryAdapter.QueryItem qi = new QueryAdapter.QueryItem(query, String.valueOf(interest), percentStr, "youtube");
-                            runOnUiThread(() -> { allQueries.add(qi); ytCount++; sortAndFilter(); });
+                            if (!query.isEmpty()) {
+                                synchronized (youtubeSuggestions) {
+                                    youtubeSuggestions.add(query);
+                                }
+                            }
                         }
-                    } catch (Exception e) {} finally { incrementCounter(); }
+                    } catch (Exception e) {} finally { checkStep1Complete(); }
                 }
             });
-        } catch (Exception e) { incrementCounter(); }
+        } catch (Exception e) { checkStep1Complete(); }
     }
 
-    private void fetchFromGoogle(String keyword) {
-        try {
-            String url = "https://suggestqueries.google.com/complete/search?client=firefox&q=" + 
-                URLEncoder.encode(keyword, "UTF-8") + "&ds=i&hl=en-US";
-            Request request = new Request.Builder().url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .build();
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) { incrementCounter(); }
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    try {
-                        if (!response.isSuccessful()) { incrementCounter(); return; }
-                        String body = response.body().string();
-                        JSONArray arr = new JSONArray(body);
-                        JSONArray suggestions = arr.getJSONArray(1);
-                        
-                        for (int i = 0; i < suggestions.length(); i++) {
-                            String query = suggestions.getString(i).toLowerCase().trim();
-                            if (seenQueries.contains(query)) continue;
-                            seenQueries.add(query);
-                            
-                            // REAL data: Use position as interest indicator
-                            int interest = Math.max(1, 100 - (i * 5));
-                            String percentStr = "N/A"; // Google Suggest doesn't provide % data
-                            
-                            QueryAdapter.QueryItem qi = new QueryAdapter.QueryItem(query, String.valueOf(interest), percentStr, "google");
-                            runOnUiThread(() -> { allQueries.add(qi); ggCount++; sortAndFilter(); });
-                        }
-                    } catch (Exception e) {} finally { incrementCounter(); }
-                }
+    private synchronized void checkStep1Complete() {
+        step1Count++;
+        if (step1Count >= KEYWORD_VARIATIONS.length && !step1Complete) {
+            step1Complete = true;
+            runOnUiThread(() -> {
+                statusText.setText("✅ STEP 1 Complete! Found " + youtubeSuggestions.size() + " YouTube suggestions. Starting STEP 2...");
+                startStep2();
             });
-        } catch (Exception e) { incrementCounter(); }
+        } else {
+            runOnUiThread(() -> {
+                statusText.setText("🎥 STEP 1: " + step1Count + "/" + KEYWORD_VARIATIONS.length + " keywords queried... " + youtubeSuggestions.size() + " suggestions so far");
+            });
+        }
     }
 
-    private void fetchFromTrends(String keyword) {
+    private void startStep2() {
+        statusText.setText("📈 STEP 2: Searching " + youtubeSuggestions.size() + " YouTube suggestions in Google Trends...");
+        
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        for (String suggestion : youtubeSuggestions) {
+            executor.submit(() -> fetchGoogleTrendsRising(suggestion));
+        }
+        executor.shutdown();
+    }
+
+    private void fetchGoogleTrendsRising(String keyword) {
         try {
-            String trendsUrl = "https://trends.google.com/trending/rss?geo=US&hl=en-US";
-            String url = "https://api.allorigins.win/get?url=" + URLEncoder.encode(trendsUrl, "UTF-8");
-            Request request = new Request.Builder().url(url)
+            String jsonPayload = String.format(
+                "{\"comparisonItem\":[{\"keyword\":\"%s\",\"geo\":\"\",\"time\":\"now 7-d\"}],\"category\":0,\"property\":\"\"}",
+                keyword
+            );
+            String encodedPayload = URLEncoder.encode(jsonPayload, "UTF-8");
+            
+            // Use CORS proxy to fetch Google Trends data
+            String trendsUrl = "https://trends.google.com/trends/api/explore?hl=en-US&tz=0&req=" + encodedPayload;
+            String proxyUrl = "https://api.allorigins.win/get?url=" + URLEncoder.encode(trendsUrl, "UTF-8");
+            
+            Request request = new Request.Builder().url(proxyUrl)
                 .header("User-Agent", "Mozilla/5.0")
                 .build();
             client.newCall(request).enqueue(new Callback() {
                 @Override
-                public void onFailure(Call call, IOException e) { incrementCounter(); }
+                public void onFailure(Call call, IOException e) { checkStep2Complete(); }
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     try {
-                        if (!response.isSuccessful()) { incrementCounter(); return; }
+                        if (!response.isSuccessful()) { checkStep2Complete(); return; }
                         String body = response.body().string();
                         JSONObject json = new JSONObject(body);
                         String contents = json.getString("contents");
                         
-                        String[] items = contents.split("<item>");
-                        for (int i = 1; i < Math.min(items.length, 30); i++) {
-                            String item = items[i];
+                        // Strip Google's anti-XSSI prefix
+                        if (contents.startsWith(")]}'\n")) {
+                            contents = contents.substring(5);
+                        }
+                        
+                        JSONObject root = new JSONObject(contents);
+                        JSONObject defaultObj = root.getJSONObject("default");
+                        JSONArray rankedList = defaultObj.getJSONArray("rankedList");
+                        
+                        // Index 1 is RISING queries
+                        if (rankedList.length() > 1) {
+                            JSONObject risingObj = rankedList.getJSONObject(1);
+                            JSONArray rankedKeywords = risingObj.getJSONArray("rankedKeyword");
                             
-                            // Extract REAL traffic data from Google Trends RSS
-                            int titleStart = item.indexOf("<title>") + 7;
-                            int titleEnd = item.indexOf("</title>");
-                            int trafficStart = item.indexOf("<ht:approx_traffic>") + 17;
-                            int trafficEnd = item.indexOf("</ht:approx_traffic>");
-                            
-                            if (titleStart > 7 && titleEnd > titleStart && trafficStart > 17 && trafficEnd > trafficStart) {
-                                String title = item.substring(titleStart, titleEnd).toLowerCase().trim();
-                                String trafficStr = item.substring(trafficStart, trafficEnd).trim();
+                            for (int i = 0; i < rankedKeywords.length(); i++) {
+                                JSONObject kw = rankedKeywords.getJSONObject(i);
+                                String q = kw.getString("query");
+                                String interest = kw.optString("value", "0");
+                                String percent = kw.optString("formattedValue", "+0%");
                                 
-                                // Parse traffic number (e.g., "10K+", "500+", "1M+")
-                                int traffic = parseTraffic(trafficStr);
+                                String fullQuery = keyword + " → " + q;
+                                if (seenQueries.contains(fullQuery)) continue;
+                                seenQueries.add(fullQuery);
                                 
-                                // STRICT FILTER: Only human-related trending topics
-                                if (title.contains("portrait") || title.contains("selfie") || 
-                                    title.contains("couple") || title.contains("baby") || 
-                                    title.contains("family") || title.contains("wedding") ||
-                                    title.contains("model") || title.contains("face") ||
-                                    title.contains("person") || title.contains("boy") ||
-                                    title.contains("girl") || title.contains("influencer") ||
-                                    title.contains("photo") || title.contains("edit") ||
-                                    title.contains("ai") || title.contains("image")) {
-                                    
-                                    if (seenQueries.contains(title)) continue;
-                                    seenQueries.add(title);
-                                    
-                                    // REAL data: Use actual traffic from Google Trends
-                                    String percentStr = "+" + (traffic / 10) + "%"; // Estimate based on traffic
-                                    
-                                    QueryAdapter.QueryItem qi = new QueryAdapter.QueryItem(
-                                        title, trafficStr, percentStr, "trends"
-                                    );
-                                    runOnUiThread(() -> { allQueries.add(qi); trCount++; sortAndFilter(); });
-                                }
+                                QueryAdapter.QueryItem qi = new QueryAdapter.QueryItem(
+                                    fullQuery, interest, percent, "trends"
+                                );
+                                
+                                runOnUiThread(() -> {
+                                    allQueries.add(qi);
+                                    step2Count++;
+                                    sortAndFilter();
+                                });
                             }
                         }
-                    } catch (Exception e) {} finally { incrementCounter(); }
+                    } catch (Exception e) {} finally { checkStep2Complete(); }
                 }
             });
-        } catch (Exception e) { incrementCounter(); }
+        } catch (Exception e) { checkStep2Complete(); }
     }
 
-    private int parseTraffic(String trafficStr) {
-        try {
-            trafficStr = trafficStr.replace("+", "").replace(",", "").trim();
-            if (trafficStr.contains("M")) {
-                return Integer.parseInt(trafficStr.replace("M", "")) * 1000000;
-            } else if (trafficStr.contains("K")) {
-                return Integer.parseInt(trafficStr.replace("K", "")) * 1000;
-            } else {
-                return Integer.parseInt(trafficStr);
-            }
-        } catch (Exception e) {
-            return 100; // Default fallback
-        }
-    }
-
-    private synchronized void incrementCounter() {
-        int completed = completedRequests.incrementAndGet();
+    private synchronized void checkStep2Complete() {
+        step2Count++;
         runOnUiThread(() -> {
-            statusText.setText("📡 " + completed + "/" + totalRequests + " | 🎥" + ytCount + " 🔍" + ggCount + " 📈" + trCount + " | Total: " + allQueries.size() + " REAL queries");
-            if (completed == totalRequests) {
+            statusText.setText("📈 STEP 2: " + step2Count + "/" + youtubeSuggestions.size() + " YouTube suggestions searched in Google Trends... " + allQueries.size() + " rising queries found");
+            if (step2Count >= youtubeSuggestions.size()) {
                 progressBar.setVisibility(View.GONE);
-                statusText.setText("✅ Complete! Found " + allQueries.size() + " unique REAL-TIME human prompts");
+                statusText.setText("✅ Pipeline Complete! Found " + allQueries.size() + " rising queries from " + youtubeSuggestions.size() + " YouTube suggestions");
             }
         });
     }
 
     private void sortAndFilter() {
-        // Sort by interest (descending) - REAL data, not random
         allQueries.sort((a, b) -> {
             try {
-                int aVal = parseTraffic(a.interest);
-                int bVal = parseTraffic(b.interest);
-                return bVal - aVal;
+                String aVal = a.percent.replace("+", "").replace("%", "").replace(",", "");
+                String bVal = b.percent.replace("+", "").replace("%", "").replace(",", "");
+                if (aVal.equals("Breakout")) return -1;
+                if (bVal.equals("Breakout")) return 1;
+                int aInt = Integer.parseInt(aVal);
+                int bInt = Integer.parseInt(bVal);
+                return bInt - aInt;
             } catch (Exception e) {
                 return 0;
             }
@@ -324,9 +300,9 @@ public class MainActivity extends AppCompatActivity {
     private void copyAsTSV() {
         if (filteredQueries.isEmpty()) { Toast.makeText(this, "No data", Toast.LENGTH_SHORT).show(); return; }
         StringBuilder sb = new StringBuilder();
-        sb.append("Source\tHuman Prompt Query\tSearch Interest\tIncrease\n");
+        sb.append("YouTube Suggestion → Rising Query\tSearch Interest\tIncrease\n");
         for (QueryAdapter.QueryItem q : filteredQueries) {
-            sb.append(q.source).append("\t").append(q.query).append("\t").append(q.interest).append("\t").append(q.percent).append("\n");
+            sb.append(q.query).append("\t").append(q.interest).append("\t").append(q.percent).append("\n");
         }
         copyToClipboard(sb.toString(), "TSV");
     }
@@ -334,9 +310,9 @@ public class MainActivity extends AppCompatActivity {
     private void copyAsCSV() {
         if (filteredQueries.isEmpty()) { Toast.makeText(this, "No data", Toast.LENGTH_SHORT).show(); return; }
         StringBuilder sb = new StringBuilder();
-        sb.append("Source,Human Prompt Query,Search Interest,Increase\n");
+        sb.append("YouTube Suggestion → Rising Query,Search Interest,Increase\n");
         for (QueryAdapter.QueryItem q : filteredQueries) {
-            sb.append(q.source).append(",\"").append(q.query.replace("\"", "\"\"")).append("\",").append(q.interest).append(",").append(q.percent).append("\n");
+            sb.append("\"").append(q.query.replace("\"", "\"\"")).append("\",").append(q.interest).append(",").append(q.percent).append("\n");
         }
         copyToClipboard(sb.toString(), "CSV");
     }
@@ -344,6 +320,6 @@ public class MainActivity extends AppCompatActivity {
     private void copyToClipboard(String text, String format) {
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cm.setPrimaryClip(android.content.ClipData.newPlainText(format.toLowerCase(), text));
-        Toast.makeText(this, "📋 Copied " + filteredQueries.size() + " REAL human prompts!", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "📋 Copied " + filteredQueries.size() + " rising queries!", Toast.LENGTH_SHORT).show();
     }
 }
