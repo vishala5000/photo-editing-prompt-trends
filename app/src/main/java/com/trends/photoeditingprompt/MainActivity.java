@@ -23,10 +23,9 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private TextView statusText, tvActiveKeyword;
     private EditText etSearch;
     
-    // Extended timeouts for reliability
     private OkHttpClient client = new OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
         .build();
     
     private Map<String, List<RisingQueryAdapter.RisingItem>> trendsDataMap = new ConcurrentHashMap<>();
@@ -35,13 +34,18 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private String currentKeyword = "";
     private boolean allExpanded = false;
 
-    // Multiple Piped instances for maximum reliability
+    // Piped API instances
     private static final String[] PIPED_INSTANCES = {
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.adminforge.de",
-        "https://pipedapi.in.projectsegfau.lt",
-        "https://api.piped.privacydev.net",
-        "https://pipedapi.syncpundit.io"
+        "https://pipedapi.in.projectsegfau.lt"
+    };
+    
+    // Invidious API instances (backup)
+    private static final String[] INVIDIOUS_INSTANCES = {
+        "https://vid.puffyan.us",
+        "https://invidious.snopyta.org",
+        "https://yewtu.be"
     };
 
     @Override
@@ -150,7 +154,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                         runOnUiThread(() -> {
                             statusText.setText("✅ Found " + liveSuggestions.size() + " suggestions. STEP 2: Checking videos...");
                             populateSuggestions(liveSuggestions);
-                            checkAllVideos(liveSuggestions);
+                            checkAllVideosSequential(liveSuggestions); // Sequential to avoid rate limiting
                         });
                     } catch (Exception e) {
                         runOnUiThread(() -> {
@@ -176,22 +180,33 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         adapter.notifyDataSetChanged();
     }
 
-    private void checkAllVideos(List<String> liveSuggestions) {
+    // Sequential checking to avoid rate limiting
+    private void checkAllVideosSequential(List<String> liveSuggestions) {
         totalVideoChecks = liveSuggestions.size();
-        ExecutorService executor = Executors.newFixedThreadPool(4);
-        for (String suggestion : liveSuggestions) {
-            executor.submit(() -> checkVideosForSuggestion(suggestion));
-        }
-        executor.shutdown();
+        new Thread(() -> {
+            for (int i = 0; i < liveSuggestions.size(); i++) {
+                String suggestion = liveSuggestions.get(i);
+                checkVideosForSuggestion(suggestion);
+                
+                // Add delay between requests to avoid rate limiting
+                if (i < liveSuggestions.size() - 1) {
+                    try {
+                        Thread.sleep(1500); // 1.5 second delay
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }).start();
     }
 
     private void checkVideosForSuggestion(String suggestion) {
         try {
-            List<SuggestionAdapter.VideoInfo> top3Videos = searchVideos(suggestion);
+            List<SuggestionAdapter.VideoInfo> top3Videos = searchVideosWithFallback(suggestion);
             
-            // SMART FALLBACK: If API fails to get 3 videos, we still fetch trends but note it
             if (top3Videos.size() < 3) {
-                markVideoCheckDone(suggestion, true, "⚠️ Video API limited. Fetching trends anyway...", top3Videos);
+                String errorMsg = "⚠️ Video APIs limited (" + top3Videos.size() + "/3 videos found). Fetching trends anyway...";
+                markVideoCheckDone(suggestion, true, errorMsg, top3Videos);
                 fetchGoogleTrendsRising(suggestion);
                 return;
             }
@@ -230,12 +245,24 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
             }
             
         } catch (Exception e) {
-            markVideoCheckDone(suggestion, true, "⚠️ Verification skipped. Fetching trends...", new ArrayList<>());
+            markVideoCheckDone(suggestion, true, "⚠️ Verification error. Fetching trends...", new ArrayList<>());
             fetchGoogleTrendsRising(suggestion);
         }
     }
 
-    private List<SuggestionAdapter.VideoInfo> searchVideos(String query) {
+    private List<SuggestionAdapter.VideoInfo> searchVideosWithFallback(String query) {
+        // Try Piped API first
+        List<SuggestionAdapter.VideoInfo> videos = searchPiped(query);
+        
+        // If Piped fails, try Invidious
+        if (videos.size() < 3) {
+            videos = searchInvidious(query);
+        }
+        
+        return videos;
+    }
+
+    private List<SuggestionAdapter.VideoInfo> searchPiped(String query) {
         List<SuggestionAdapter.VideoInfo> videos = new ArrayList<>();
         
         for (String instance : PIPED_INSTANCES) {
@@ -257,12 +284,10 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                 for (int i = 0; i < items.length() && videos.size() < 3; i++) {
                     JSONObject item = items.getJSONObject(i);
                     
-                    // Only process actual videos
                     if (!"stream".equals(item.optString("type"))) continue;
                     
                     String title = item.optString("title", "Untitled");
                     
-                    // Handle views (can be long or string like "1.2K")
                     long views = 0;
                     try {
                         views = item.getLong("views");
@@ -271,7 +296,6 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                     }
                     
                     long uploaded = item.optLong("uploaded", 0);
-                    // Convert seconds to milliseconds if needed
                     if (uploaded > 0 && uploaded < 10000000000L) {
                         uploaded *= 1000;
                     }
@@ -284,20 +308,61 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                         channelId = uploaderUrl.replace("/channel/", "");
                     }
                     
-                    long subscribers = getSubscriberCount(instance, channelId);
+                    long subscribers = getSubscriberCountPiped(instance, channelId);
                     videos.add(new SuggestionAdapter.VideoInfo(title, views, uploaded, uploaderName, subscribers));
                 }
                 
-                if (videos.size() >= 3) break; // Got enough, stop trying instances
+                if (videos.size() >= 3) break;
                 
             } catch (Exception e) {
-                continue; // Try next instance
+                continue;
             }
         }
         return videos;
     }
 
-    private long getSubscriberCount(String instance, String channelId) {
+    private List<SuggestionAdapter.VideoInfo> searchInvidious(String query) {
+        List<SuggestionAdapter.VideoInfo> videos = new ArrayList<>();
+        
+        for (String instance : INVIDIOUS_INSTANCES) {
+            try {
+                String url = instance + "/api/v1/search?q=" + URLEncoder.encode(query, "UTF-8") + "&type=video";
+                Request request = new Request.Builder().url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .build();
+                
+                Response response = client.newCall(request).execute();
+                if (!response.isSuccessful()) continue;
+                
+                String body = response.body().string();
+                JSONArray items = new JSONArray(body);
+                
+                for (int i = 0; i < items.length() && videos.size() < 3; i++) {
+                    JSONObject item = items.getJSONObject(i);
+                    
+                    if (!"video".equals(item.optString("type"))) continue;
+                    
+                    String title = item.optString("title", "Untitled");
+                    long views = item.optLong("viewCount", 0);
+                    long published = item.optLong("published", 0) * 1000; // Convert to milliseconds
+                    
+                    String author = item.optString("author", "Unknown");
+                    String authorId = item.optString("authorId", "");
+                    
+                    long subscribers = getSubscriberCountInvidious(instance, authorId);
+                    videos.add(new SuggestionAdapter.VideoInfo(title, views, published, author, subscribers));
+                }
+                
+                if (videos.size() >= 3) break;
+                
+            } catch (Exception e) {
+                continue;
+            }
+        }
+        return videos;
+    }
+
+    private long getSubscriberCountPiped(String instance, String channelId) {
         if (channelId.isEmpty()) return 0;
         try {
             String url = instance + "/channel/" + channelId;
@@ -306,6 +371,20 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
             if (!response.isSuccessful()) return 0;
             JSONObject json = new JSONObject(response.body().string());
             return json.optLong("subscriberCount", 0);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private long getSubscriberCountInvidious(String instance, String authorId) {
+        if (authorId.isEmpty()) return 0;
+        try {
+            String url = instance + "/api/v1/channels/" + authorId;
+            Request request = new Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build();
+            Response response = client.newCall(request).execute();
+            if (!response.isSuccessful()) return 0;
+            JSONObject json = new JSONObject(response.body().string());
+            return json.optLong("subCount", 0);
         } catch (Exception e) {
             return 0;
         }
