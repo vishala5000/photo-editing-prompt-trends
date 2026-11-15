@@ -23,6 +23,18 @@
             android:backgroundTint="#4CAF50" android:textColor="#FFF"/>
     </LinearLayout>
 
+    <!-- Validation Status -->
+    <TextView android:id="@+id/tvValidation"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textSize="12sp" android:layout_marginTop="4dp" android:layout_marginStart="32dp"/>
+
+    <!-- Video Details -->
+    <TextView android:id="@+id/tvVideoDetails"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textSize="11sp" android:textColor="#666"
+        android:layout_marginTop="4dp" android:layout_marginStart="32dp"
+        android:visibility="gone"/>
+
     <!-- Rising Queries (Hidden by default) -->
     <LinearLayout android:id="@+id/layoutRising"
         android:layout_width="match_parent" android:layout_height="wrap_content"
