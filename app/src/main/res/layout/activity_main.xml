@@ -4,18 +4,17 @@
     android:orientation="vertical" android:padding="12dp" android:background="#FAFAFA">
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="🎯 Universal Keyword Finder" android:textSize="20sp" android:textStyle="bold"
+        android:text="🎯 Smart Keyword Finder" android:textSize="20sp" android:textStyle="bold"
         android:textColor="#1a1a1a" android:paddingBottom="4dp"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Type ANY keyword → Get real-time YouTube + Google suggestions"
+        android:text="YouTube Suggestions → Video Filter (<50K views/subs, <7 days) → Google Trends"
         android:textSize="11sp" android:textColor="#666" android:paddingBottom="8dp"/>
 
-    <!-- Single Manual Input -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal" android:layout_marginBottom="8dp">
         <EditText android:id="@+id/etSearch"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-            android:hint="🔍 Type your keyword (e.g., photo editing, cooking, gaming...)"
+            android:hint="🔍 Enter keyword..."
             android:padding="12dp" android:background="@android:drawable/edit_text"
             android:textSize="14sp" android:textStyle="bold"/>
         <Button android:id="@+id/btnRefresh" android:layout_width="wrap_content"
@@ -23,8 +22,7 @@
             android:layout_marginStart="4dp" android:backgroundTint="#1976D2"/>
     </LinearLayout>
 
-    <!-- Active Keyword Display -->
-    <TextView android:id="@+id/tvActiveNiche" android:layout_width="match_parent"
+    <TextView android:id="@+id/tvActiveKeyword" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:text="💡 Enter a keyword above and tap GO"
         android:textSize="12sp" android:textStyle="bold" android:textColor="#1976D2"
         android:padding="8dp" android:background="#E3F2FD" android:layout_marginBottom="4dp"/>
