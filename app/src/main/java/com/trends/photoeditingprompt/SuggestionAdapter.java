@@ -12,23 +12,27 @@ public class SuggestionAdapter extends RecyclerView.Adapter<SuggestionAdapter.VH
         public long uploaded;
         public String channelName;
         public long subscribers;
+        
         public VideoInfo(String t, long v, long u, String c, long s) {
-            title=t; views=v; uploaded=u; channelName=c; subscribers=s;
+            title = t; views = v; uploaded = u; channelName = c; subscribers = s;
+        }
+        
+        public boolean passesRules() {
+            long sevenDaysAgo = System.currentTimeMillis() - (7L * 24 * 60 * 60 * 1000);
+            return views < 50000 && uploaded > sevenDaysAgo && subscribers < 50000;
         }
     }
     
     public static class SuggestionItem {
         public String suggestion;
-        public List<RisingQueryAdapter.RisingItem> risingQueries;
+        public List<RisingQueryAdapter.RisingItem> risingQueries = new ArrayList<>();
         public boolean isExpanded = false;
-        public boolean passedValidation = false;
-        public String validationMessage = "";
         public List<VideoInfo> checkedVideos = new ArrayList<>();
+        public boolean videoCheckPassed = false;
+        public boolean videoCheckDone = false;
+        public String checkStatus = "⏳ Checking videos...";
         
-        public SuggestionItem(String s) {
-            suggestion = s;
-            risingQueries = new ArrayList<>();
-        }
+        public SuggestionItem(String s) { suggestion = s; }
     }
     
     private List<SuggestionItem> items;
@@ -44,21 +48,20 @@ public class SuggestionAdapter extends RecyclerView.Adapter<SuggestionAdapter.VH
     }
 
     public static class VH extends RecyclerView.ViewHolder {
-        TextView tvSuggestion, tvValidation, tvVideoDetails;
+        ImageView ivExpand;
+        TextView tvSuggestion, tvVideoStats;
         Button btnCopy;
         LinearLayout layoutRising;
         RecyclerView rvRising;
-        ImageView ivExpand;
         
         public VH(View v) {
             super(v);
+            ivExpand = v.findViewById(R.id.ivExpand);
             tvSuggestion = v.findViewById(R.id.tvSuggestion);
-            tvValidation = v.findViewById(R.id.tvValidation);
-            tvVideoDetails = v.findViewById(R.id.tvVideoDetails);
+            tvVideoStats = v.findViewById(R.id.tvVideoStats);
             btnCopy = v.findViewById(R.id.btnCopy);
             layoutRising = v.findViewById(R.id.layoutRising);
             rvRising = v.findViewById(R.id.rvRising);
-            ivExpand = v.findViewById(R.id.ivExpand);
         }
     }
 
@@ -74,44 +77,29 @@ public class SuggestionAdapter extends RecyclerView.Adapter<SuggestionAdapter.VH
         
         holder.tvSuggestion.setText(item.suggestion);
         
-        // Show validation status
-        if (item.passedValidation) {
-            holder.tvValidation.setText("✅ Passed validation (" + item.checkedVideos.size() + " videos checked)");
-            holder.tvValidation.setTextColor(0xFF2E7D32);
-        } else {
-            holder.tvValidation.setText("❌ " + item.validationMessage);
-            holder.tvValidation.setTextColor(0xFFC62828);
-        }
-        
-        // Show video details
-        if (!item.checkedVideos.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < item.checkedVideos.size(); i++) {
-                VideoInfo v = item.checkedVideos.get(i);
-                long daysAgo = (System.currentTimeMillis() - v.uploaded) / (1000 * 60 * 60 * 24);
-                sb.append((i+1) + ". ").append(v.title).append("\n");
-                sb.append("   👁 ").append(formatNumber(v.views)).append(" views");
-                sb.append(" • 📅 ").append(daysAgo).append(" days ago");
-                sb.append(" • 👤 ").append(v.channelName);
-                sb.append(" (").append(formatNumber(v.subscribers)).append(" subs)\n");
+        // Show video check status
+        holder.tvVideoStats.setText(item.checkStatus);
+        if (item.videoCheckDone) {
+            if (item.videoCheckPassed) {
+                holder.tvVideoStats.setTextColor(0xFF2E7D32); // Green
+            } else {
+                holder.tvVideoStats.setTextColor(0xFFC62828); // Red
             }
-            holder.tvVideoDetails.setText(sb.toString());
-            holder.tvVideoDetails.setVisibility(View.VISIBLE);
         } else {
-            holder.tvVideoDetails.setVisibility(View.GONE);
+            holder.tvVideoStats.setTextColor(0xFF757575); // Gray
         }
         
-        // Expand/Collapse logic
+        // Expand/Collapse - only if has rising queries
+        boolean hasRising = !item.risingQueries.isEmpty();
         holder.itemView.setOnClickListener(v -> {
-            if (item.passedValidation && !item.risingQueries.isEmpty()) {
+            if (hasRising) {
                 item.isExpanded = !item.isExpanded;
                 holder.layoutRising.setVisibility(item.isExpanded ? View.VISIBLE : View.GONE);
                 holder.ivExpand.setRotation(item.isExpanded ? 180 : 0);
             }
         });
         
-        // Copy button (only for passed suggestions)
-        holder.btnCopy.setVisibility(item.passedValidation ? View.VISIBLE : View.GONE);
+        // Copy button - always visible
         holder.btnCopy.setOnClickListener(v -> {
             if (copyListener != null) {
                 copyListener.onCopyClick(item);
@@ -119,19 +107,13 @@ public class SuggestionAdapter extends RecyclerView.Adapter<SuggestionAdapter.VH
         });
         
         // Rising queries RecyclerView
-        if (item.passedValidation && item.risingQueries.size() > 0) {
+        if (hasRising) {
             holder.rvRising.setLayoutManager(new LinearLayoutManager(holder.itemView.getContext()));
             holder.rvRising.setAdapter(new RisingQueryAdapter(item.risingQueries));
             holder.rvRising.setNestedScrollingEnabled(false);
         }
         
-        holder.ivExpand.setVisibility(item.passedValidation && !item.risingQueries.isEmpty() ? View.VISIBLE : View.INVISIBLE);
-    }
-    
-    private String formatNumber(long num) {
-        if (num >= 1000000) return String.format("%.1fM", num / 1000000.0);
-        if (num >= 1000) return String.format("%.1fK", num / 1000.0);
-        return String.valueOf(num);
+        holder.ivExpand.setVisibility(hasRising ? View.VISIBLE : View.INVISIBLE);
     }
 
     @Override
