@@ -9,17 +9,14 @@ public class SuggestionAdapter extends RecyclerView.Adapter<SuggestionAdapter.VH
     public static class VideoInfo {
         public String title;
         public long views;
-        public long uploaded;
-        public String channelName;
-        public long subscribers;
         
-        public VideoInfo(String t, long v, long u, String c, long s) {
-            title = t; views = v; uploaded = u; channelName = c; subscribers = s;
+        public VideoInfo(String t, long v) {
+            title = t;
+            views = v;
         }
         
         public boolean passesRules() {
-            long sevenDaysAgo = System.currentTimeMillis() - (7L * 24 * 60 * 60 * 1000);
-            return views < 50000 && uploaded > sevenDaysAgo && subscribers < 50000;
+            return views < 50000;
         }
     }
     
@@ -76,20 +73,18 @@ public class SuggestionAdapter extends RecyclerView.Adapter<SuggestionAdapter.VH
         SuggestionItem item = items.get(position);
         
         holder.tvSuggestion.setText(item.suggestion);
-        
-        // Show video check status
         holder.tvVideoStats.setText(item.checkStatus);
+        
         if (item.videoCheckDone) {
             if (item.videoCheckPassed) {
-                holder.tvVideoStats.setTextColor(0xFF2E7D32); // Green
+                holder.tvVideoStats.setTextColor(0xFF2E7D32);
             } else {
-                holder.tvVideoStats.setTextColor(0xFFC62828); // Red
+                holder.tvVideoStats.setTextColor(0xFFC62828);
             }
         } else {
-            holder.tvVideoStats.setTextColor(0xFF757575); // Gray
+            holder.tvVideoStats.setTextColor(0xFF757575);
         }
         
-        // Expand/Collapse - only if has rising queries
         boolean hasRising = !item.risingQueries.isEmpty();
         holder.itemView.setOnClickListener(v -> {
             if (hasRising) {
@@ -99,14 +94,12 @@ public class SuggestionAdapter extends RecyclerView.Adapter<SuggestionAdapter.VH
             }
         });
         
-        // Copy button - always visible
         holder.btnCopy.setOnClickListener(v -> {
             if (copyListener != null) {
                 copyListener.onCopyClick(item);
             }
         });
         
-        // Rising queries RecyclerView
         if (hasRising) {
             holder.rvRising.setLayoutManager(new LinearLayoutManager(holder.itemView.getContext()));
             holder.rvRising.setAdapter(new RisingQueryAdapter(item.risingQueries));
