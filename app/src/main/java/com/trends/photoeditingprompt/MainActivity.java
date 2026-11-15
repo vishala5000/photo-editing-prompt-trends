@@ -22,24 +22,24 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private ProgressBar progressBar;
     private TextView statusText, tvActiveKeyword;
     private EditText etSearch;
-    private OkHttpClient client = new OkHttpClient();
+    private OkHttpClient client = new OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build();
+    
     private Map<String, List<RisingQueryAdapter.RisingItem>> trendsDataMap = new ConcurrentHashMap<>();
-    private AtomicInteger validationCompleted = new AtomicInteger(0);
-    private int totalValidations = 0;
+    private AtomicInteger completedVideoChecks = new AtomicInteger(0);
+    private int totalVideoChecks = 0;
     private String currentKeyword = "";
     private boolean allExpanded = false;
 
-    // Piped API instances (free YouTube frontend)
+    // Piped API instances (free YouTube frontend - no API key needed)
     private static final String[] PIPED_INSTANCES = {
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.adminforge.de",
-        "https://api.piped.projectsegfau.lt"
+        "https://pipedapi.in.projectsegfau.lt",
+        "https://api.piped.privacydev.net"
     };
-    
-    // Validation thresholds
-    private static final long SEVEN_DAYS_MS = 7L * 24 * 60 * 60 * 1000;
-    private static final long MAX_VIEWS = 50000;
-    private static final long MAX_SUBSCRIBERS = 50000;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -49,7 +49,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         recyclerView = findViewById(R.id.recyclerView);
         progressBar = findViewById(R.id.progressBar);
         statusText = findViewById(R.id.statusText);
-        tvActiveKeyword = findViewById(R.id.tvActiveNiche);
+        tvActiveKeyword = findViewById(R.id.tvActiveKeyword);
         etSearch = findViewById(R.id.etSearch);
         SwipeRefreshLayout swipe = findViewById(R.id.swipeRefresh);
         Button btnCopyAll = findViewById(R.id.btnCopyAll);
@@ -66,7 +66,9 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         swipe.setOnRefreshListener(() -> { startPipeline(); swipe.setRefreshing(false); });
         
         etSearch.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE || actionId == EditorInfo.IME_ACTION_GO) {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH || 
+                actionId == EditorInfo.IME_ACTION_DONE || 
+                actionId == EditorInfo.IME_ACTION_GO) {
                 startPipeline();
                 return true;
             }
@@ -77,11 +79,12 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private void toggleExpandAll() {
         allExpanded = !allExpanded;
         for (SuggestionAdapter.SuggestionItem item : suggestions) {
-            if (item.passedValidation && !item.risingQueries.isEmpty()) {
+            if (!item.risingQueries.isEmpty()) {
                 item.isExpanded = allExpanded;
             }
         }
         adapter.notifyDataSetChanged();
+        Toast.makeText(this, allExpanded ? "📂 All expanded" : "📁 All collapsed", Toast.LENGTH_SHORT).show();
     }
 
     private void startPipeline() {
@@ -98,7 +101,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         suggestions.clear();
         trendsDataMap.clear();
         adapter.notifyDataSetChanged();
-        validationCompleted.set(0);
+        completedVideoChecks.set(0);
         allExpanded = false;
 
         statusText.setText("🎥 STEP 1: Fetching YouTube suggestions...");
@@ -110,7 +113,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
             String url = "http://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=" + 
                 URLEncoder.encode(keyword, "UTF-8") + "&hl=en-US";
             Request request = new Request.Builder().url(url)
-                .header("User-Agent", "Mozilla/5.0")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 .build();
             client.newCall(request).enqueue(new Callback() {
                 @Override
@@ -145,14 +148,14 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                         }
                         
                         runOnUiThread(() -> {
-                            statusText.setText("✅ Found " + liveSuggestions.size() + " suggestions. STEP 2: Validating videos...");
+                            statusText.setText("✅ Found " + liveSuggestions.size() + " suggestions. STEP 2: Checking videos...");
                             populateSuggestions(liveSuggestions);
-                            validateAllSuggestions(liveSuggestions);
+                            checkAllVideos(liveSuggestions);
                         });
                     } catch (Exception e) {
                         runOnUiThread(() -> {
                             progressBar.setVisibility(View.GONE);
-                            statusText.setText("❌ Parse error");
+                            statusText.setText("❌ Parse error: " + e.getMessage());
                         });
                     }
                 }
@@ -160,7 +163,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         } catch (Exception e) {
             runOnUiThread(() -> {
                 progressBar.setVisibility(View.GONE);
-                statusText.setText("❌ Request failed");
+                statusText.setText("❌ Request failed: " + e.getMessage());
             });
         }
     }
@@ -173,62 +176,66 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         adapter.notifyDataSetChanged();
     }
 
-    private void validateAllSuggestions(List<String> liveSuggestions) {
-        totalValidations = liveSuggestions.size();
+    private void checkAllVideos(List<String> liveSuggestions) {
+        totalVideoChecks = liveSuggestions.size();
         ExecutorService executor = Executors.newFixedThreadPool(4);
         for (String suggestion : liveSuggestions) {
-            executor.submit(() -> validateSuggestion(suggestion));
+            executor.submit(() -> checkVideosForSuggestion(suggestion));
         }
         executor.shutdown();
     }
 
-    private void validateSuggestion(String suggestion) {
+    private void checkVideosForSuggestion(String suggestion) {
         try {
-            // Search YouTube for this suggestion
-            List<SuggestionAdapter.VideoInfo> top3Videos = searchYouTube(suggestion);
+            // Search for videos using Piped API
+            List<SuggestionAdapter.VideoInfo> top3Videos = searchVideos(suggestion);
             
             if (top3Videos.size() < 3) {
-                markValidationResult(suggestion, false, "Less than 3 videos found", top3Videos);
+                markVideoCheckDone(suggestion, false, "⚠️ Could not find 3 videos", top3Videos);
                 return;
             }
             
-            // Check each video
-            for (SuggestionAdapter.VideoInfo video : top3Videos) {
-                // Check views
-                if (video.views >= MAX_VIEWS) {
-                    markValidationResult(suggestion, false, 
-                        "Video has " + video.views + " views (must be < 50K)", top3Videos);
-                    return;
-                }
+            // Check each video against rules
+            boolean allPass = true;
+            StringBuilder statusBuilder = new StringBuilder();
+            statusBuilder.append("📊 Top 3 Videos:\n");
+            
+            for (int i = 0; i < 3; i++) {
+                SuggestionAdapter.VideoInfo v = top3Videos.get(i);
+                long daysAgo = (System.currentTimeMillis() - v.uploaded) / (1000 * 60 * 60 * 24);
                 
-                // Check upload date
-                if (video.uploaded < System.currentTimeMillis() - SEVEN_DAYS_MS) {
-                    long daysAgo = (System.currentTimeMillis() - video.uploaded) / (1000 * 60 * 60 * 24);
-                    markValidationResult(suggestion, false, 
-                        "Video uploaded " + daysAgo + " days ago (must be < 7 days)", top3Videos);
-                    return;
-                }
+                boolean passes = v.passesRules();
+                String icon = passes ? "✅" : "❌";
                 
-                // Check channel subscribers
-                if (video.subscribers >= MAX_SUBSCRIBERS) {
-                    markValidationResult(suggestion, false, 
-                        video.channelName + " has " + video.subscribers + " subscribers (must be < 50K)", top3Videos);
-                    return;
-                }
+                statusBuilder.append(icon).append(" ").append(truncate(v.title, 35)).append("\n");
+                statusBuilder.append("   👁 ").append(formatNumber(v.views))
+                    .append(" | 📅 ").append(daysAgo).append("d")
+                    .append(" | 👤 ").append(truncate(v.channelName, 15))
+                    .append(" (").append(formatNumber(v.subscribers)).append(")\n");
+                
+                if (!passes) allPass = false;
             }
             
-            // All videos passed validation
-            markValidationResult(suggestion, true, "All 3 videos meet criteria", top3Videos);
+            String finalStatus;
+            if (allPass) {
+                finalStatus = "✅ LOW COMPETITION - Fetching Trends...\n" + statusBuilder.toString();
+            } else {
+                finalStatus = "❌ HIGH COMPETITION - Skipped\n" + statusBuilder.toString();
+            }
             
-            // Fetch Google Trends rising queries
-            fetchGoogleTrendsRising(suggestion);
+            markVideoCheckDone(suggestion, allPass, finalStatus, top3Videos);
+            
+            // Only fetch Google Trends if all videos pass
+            if (allPass) {
+                fetchGoogleTrendsRising(suggestion);
+            }
             
         } catch (Exception e) {
-            markValidationResult(suggestion, false, "Validation error: " + e.getMessage(), new ArrayList<>());
+            markVideoCheckDone(suggestion, false, "⚠️ Video check failed: " + e.getMessage(), new ArrayList<>());
         }
     }
 
-    private List<SuggestionAdapter.VideoInfo> searchYouTube(String query) {
+    private List<SuggestionAdapter.VideoInfo> searchVideos(String query) {
         List<SuggestionAdapter.VideoInfo> videos = new ArrayList<>();
         
         for (String instance : PIPED_INSTANCES) {
@@ -245,30 +252,30 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                 JSONObject json = new JSONObject(body);
                 JSONArray items = json.optJSONArray("items");
                 
-                if (items == null || items.length() < 3) continue;
+                if (items == null || items.length() == 0) continue;
                 
                 // Get top 3 videos
-                for (int i = 0; i < 3 && i < items.length(); i++) {
+                for (int i = 0; i < Math.min(3, items.length()); i++) {
                     JSONObject video = items.getJSONObject(i);
-                    String title = video.optString("title", "");
+                    String title = video.optString("title", "Untitled");
                     long views = video.optLong("views", 0);
                     long uploaded = video.optLong("uploaded", 0);
+                    String uploaderName = video.optString("uploaderName", "Unknown");
                     String uploaderUrl = video.optString("uploaderUrl", "");
-                    String channelName = video.optString("uploader", "");
                     
-                    // Extract channel ID from uploaderUrl
+                    // Extract channel ID
                     String channelId = "";
                     if (uploaderUrl.contains("/channel/")) {
                         channelId = uploaderUrl.replace("/channel/", "");
                     }
                     
-                    // Get channel subscriber count
-                    long subscribers = getChannelSubscribers(instance, channelId);
+                    // Get subscriber count
+                    long subscribers = getSubscriberCount(instance, channelId);
                     
-                    videos.add(new SuggestionAdapter.VideoInfo(title, views, uploaded, channelName, subscribers));
+                    videos.add(new SuggestionAdapter.VideoInfo(title, views, uploaded, uploaderName, subscribers));
                 }
                 
-                if (videos.size() == 3) break; // Success
+                if (videos.size() >= 3) break; // Success
                 
             } catch (Exception e) {
                 // Try next instance
@@ -279,7 +286,7 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         return videos;
     }
 
-    private long getChannelSubscribers(String instance, String channelId) {
+    private long getSubscriberCount(String instance, String channelId) {
         if (channelId.isEmpty()) return 0;
         
         try {
@@ -300,12 +307,13 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         }
     }
 
-    private void markValidationResult(String suggestion, boolean passed, String message, List<SuggestionAdapter.VideoInfo> videos) {
+    private void markVideoCheckDone(String suggestion, boolean passed, String status, List<SuggestionAdapter.VideoInfo> videos) {
         runOnUiThread(() -> {
             for (SuggestionAdapter.SuggestionItem item : suggestions) {
                 if (item.suggestion.equalsIgnoreCase(suggestion)) {
-                    item.passedValidation = passed;
-                    item.validationMessage = message;
+                    item.videoCheckDone = true;
+                    item.videoCheckPassed = passed;
+                    item.checkStatus = status;
                     item.checkedVideos.clear();
                     item.checkedVideos.addAll(videos);
                     break;
@@ -313,15 +321,15 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
             }
             adapter.notifyDataSetChanged();
             
-            int completed = validationCompleted.incrementAndGet();
-            statusText.setText("🔍 STEP 2: Validating " + completed + "/" + totalValidations + " suggestions...");
+            int completed = completedVideoChecks.incrementAndGet();
+            statusText.setText("📊 STEP 2: " + completed + "/" + totalVideoChecks + " videos checked...");
             
-            if (completed >= totalValidations) {
+            if (completed >= totalVideoChecks) {
                 int passedCount = 0;
                 for (SuggestionAdapter.SuggestionItem item : suggestions) {
-                    if (item.passedValidation) passedCount++;
+                    if (item.videoCheckPassed) passedCount++;
                 }
-                statusText.setText("✅ Validation complete! " + passedCount + "/" + totalValidations + " passed. Fetching Google Trends...");
+                statusText.setText("✅ Video check complete! " + passedCount + "/" + totalVideoChecks + " passed. Fetching Google Trends...");
             }
         });
     }
@@ -378,10 +386,10 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                     
                     if (!risingItems.isEmpty()) {
                         trendsDataMap.put(suggestion, risingItems);
-                        runOnUiThread(() -> updateUI(suggestion));
+                        runOnUiThread(() -> updateUIWithTrends(suggestion));
                     }
                     
-                    break; // Success, no need to try other proxies
+                    break; // Success
                     
                 } catch (Exception e) {
                     continue; // Try next proxy
@@ -392,16 +400,32 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         }
     }
 
-    private void updateUI(String suggestion) {
+    private void updateUIWithTrends(String suggestion) {
         for (SuggestionAdapter.SuggestionItem item : suggestions) {
             if (item.suggestion.equalsIgnoreCase(suggestion)) {
                 List<RisingQueryAdapter.RisingItem> items = trendsDataMap.getOrDefault(suggestion, new ArrayList<>());
                 item.risingQueries.clear();
                 item.risingQueries.addAll(items);
+                
+                if (item.videoCheckPassed && !items.isEmpty()) {
+                    item.checkStatus = "✅ LOW COMPETITION - " + items.size() + " rising queries found!\n" + 
+                        item.checkStatus.substring(item.checkStatus.indexOf("\n") + 1);
+                }
                 break;
             }
         }
         adapter.notifyDataSetChanged();
+    }
+
+    private String formatNumber(long num) {
+        if (num >= 1000000) return String.format("%.1fM", num / 1000000.0);
+        if (num >= 1000) return String.format("%.1fK", num / 1000.0);
+        return String.valueOf(num);
+    }
+
+    private String truncate(String s, int maxLen) {
+        if (s == null) return "";
+        return s.length() > maxLen ? s.substring(0, maxLen) + "..." : s;
     }
 
     @Override
@@ -410,18 +434,13 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         sb.append("🎯 Keyword: ").append(currentKeyword).append("\n");
         sb.append("🎥 YouTube Suggestion: ").append(item.suggestion).append("\n\n");
         
-        sb.append("📊 Video Validation:\n");
-        for (SuggestionAdapter.VideoInfo v : item.checkedVideos) {
-            long daysAgo = (System.currentTimeMillis() - v.uploaded) / (1000 * 60 * 60 * 24);
-            sb.append("• ").append(v.title).append("\n");
-            sb.append("  Views: ").append(v.views).append(" | Days ago: ").append(daysAgo);
-            sb.append(" | Channel: ").append(v.channelName).append(" (").append(v.subscribers).append(" subs)\n");
-        }
+        sb.append("📊 Video Analysis:\n");
+        sb.append(item.checkStatus.replace("\n", "\n")).append("\n\n");
         
-        sb.append("\n📈 Google Trends Rising Queries (Last 7 Days):\n");
         if (item.risingQueries.isEmpty()) {
-            sb.append("(No rising queries found)");
+            sb.append("📈 Google Trends: (No rising queries)");
         } else {
+            sb.append("📈 Google Trends Rising Queries (Last 7 Days):\n");
             sb.append("Query\tInterest\tIncrease\n");
             for (RisingQueryAdapter.RisingItem rq : item.risingQueries) {
                 sb.append(rq.query).append("\t").append(rq.interest).append("\t").append(rq.percent).append("\n");
@@ -444,22 +463,13 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         for (SuggestionAdapter.SuggestionItem item : suggestions) {
             sb.append("───────────────────────────────────────\n");
             sb.append("🎥 YouTube Suggestion: ").append(item.suggestion).append("\n");
-            sb.append("Status: ").append(item.passedValidation ? "✅ PASSED" : "❌ FAILED").append("\n");
-            sb.append("Reason: ").append(item.validationMessage).append("\n\n");
+            sb.append("Status: ").append(item.videoCheckPassed ? "✅ LOW COMPETITION" : "❌ HIGH COMPETITION").append("\n\n");
             
-            if (!item.checkedVideos.isEmpty()) {
-                sb.append("📊 Videos Checked:\n");
-                for (SuggestionAdapter.VideoInfo v : item.checkedVideos) {
-                    long daysAgo = (System.currentTimeMillis() - v.uploaded) / (1000 * 60 * 60 * 24);
-                    sb.append("• ").append(v.title).append("\n");
-                    sb.append("  Views: ").append(v.views).append(" | Days: ").append(daysAgo);
-                    sb.append(" | ").append(v.channelName).append(" (").append(v.subscribers).append(" subs)\n");
-                }
-                sb.append("\n");
-            }
+            sb.append("📊 Video Analysis:\n");
+            sb.append(item.checkStatus.replace("\n", "\n")).append("\n");
             
-            if (item.passedValidation && !item.risingQueries.isEmpty()) {
-                sb.append("📈 Rising Queries:\n");
+            if (!item.risingQueries.isEmpty()) {
+                sb.append("\n📈 Google Trends Rising Queries:\n");
                 sb.append("Query\tInterest\tIncrease\n");
                 for (RisingQueryAdapter.RisingItem rq : item.risingQueries) {
                     sb.append(rq.query).append("\t").append(rq.interest).append("\t").append(rq.percent).append("\n");
