@@ -23,11 +23,23 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private TextView statusText, tvActiveKeyword;
     private EditText etSearch;
     private OkHttpClient client = new OkHttpClient();
-    private Map<String, List<RisingQueryAdapter.RisingItem>> dataMap = new ConcurrentHashMap<>();
-    private AtomicInteger completedRequests = new AtomicInteger(0);
-    private int totalRequests = 0;
+    private Map<String, List<RisingQueryAdapter.RisingItem>> trendsDataMap = new ConcurrentHashMap<>();
+    private AtomicInteger validationCompleted = new AtomicInteger(0);
+    private int totalValidations = 0;
     private String currentKeyword = "";
     private boolean allExpanded = false;
+
+    // Piped API instances (free YouTube frontend)
+    private static final String[] PIPED_INSTANCES = {
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.adminforge.de",
+        "https://api.piped.projectsegfau.lt"
+    };
+    
+    // Validation thresholds
+    private static final long SEVEN_DAYS_MS = 7L * 24 * 60 * 60 * 1000;
+    private static final long MAX_VIEWS = 50000;
+    private static final long MAX_SUBSCRIBERS = 50000;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,7 +77,9 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
     private void toggleExpandAll() {
         allExpanded = !allExpanded;
         for (SuggestionAdapter.SuggestionItem item : suggestions) {
-            item.isExpanded = allExpanded;
+            if (item.passedValidation && !item.risingQueries.isEmpty()) {
+                item.isExpanded = allExpanded;
+            }
         }
         adapter.notifyDataSetChanged();
     }
@@ -82,14 +96,16 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         
         progressBar.setVisibility(View.VISIBLE);
         suggestions.clear();
-        dataMap.clear();
+        trendsDataMap.clear();
         adapter.notifyDataSetChanged();
-        completedRequests.set(0);
+        validationCompleted.set(0);
         allExpanded = false;
 
         statusText.setText("🎥 STEP 1: Fetching YouTube suggestions...");
-        
-        // STEP 1: Get YouTube suggestions
+        fetchYouTubeSuggestions(keyword);
+    }
+
+    private void fetchYouTubeSuggestions(String keyword) {
         try {
             String url = "http://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=" + 
                 URLEncoder.encode(keyword, "UTF-8") + "&hl=en-US";
@@ -129,9 +145,9 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
                         }
                         
                         runOnUiThread(() -> {
-                            statusText.setText("✅ Found " + liveSuggestions.size() + " suggestions. STEP 2: Fetching related queries...");
+                            statusText.setText("✅ Found " + liveSuggestions.size() + " suggestions. STEP 2: Validating videos...");
                             populateSuggestions(liveSuggestions);
-                            fetchRelatedQueries(liveSuggestions);
+                            validateAllSuggestions(liveSuggestions);
                         });
                     } catch (Exception e) {
                         runOnUiThread(() -> {
@@ -157,97 +173,235 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         adapter.notifyDataSetChanged();
     }
 
-    private void fetchRelatedQueries(List<String> liveSuggestions) {
-        totalRequests = liveSuggestions.size();
-        ExecutorService executor = Executors.newFixedThreadPool(6);
+    private void validateAllSuggestions(List<String> liveSuggestions) {
+        totalValidations = liveSuggestions.size();
+        ExecutorService executor = Executors.newFixedThreadPool(4);
         for (String suggestion : liveSuggestions) {
-            executor.submit(() -> fetchGoogleAutocomplete(suggestion));
+            executor.submit(() -> validateSuggestion(suggestion));
         }
         executor.shutdown();
     }
 
-    private void fetchGoogleAutocomplete(String suggestion) {
+    private void validateSuggestion(String suggestion) {
         try {
-            // Google Search Autocomplete - ALWAYS works, ALWAYS returns data
-            String url = "https://suggestqueries.google.com/complete/search?client=firefox&q=" + 
-                URLEncoder.encode(suggestion, "UTF-8") + "&hl=en-US";
+            // Search YouTube for this suggestion
+            List<SuggestionAdapter.VideoInfo> top3Videos = searchYouTube(suggestion);
             
-            Request request = new Request.Builder().url(url)
-                .header("User-Agent", "Mozilla/5.0")
-                .build();
+            if (top3Videos.size() < 3) {
+                markValidationResult(suggestion, false, "Less than 3 videos found", top3Videos);
+                return;
+            }
+            
+            // Check each video
+            for (SuggestionAdapter.VideoInfo video : top3Videos) {
+                // Check views
+                if (video.views >= MAX_VIEWS) {
+                    markValidationResult(suggestion, false, 
+                        "Video has " + video.views + " views (must be < 50K)", top3Videos);
+                    return;
+                }
                 
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) { 
-                    incrementAndCheck(); 
+                // Check upload date
+                if (video.uploaded < System.currentTimeMillis() - SEVEN_DAYS_MS) {
+                    long daysAgo = (System.currentTimeMillis() - video.uploaded) / (1000 * 60 * 60 * 24);
+                    markValidationResult(suggestion, false, 
+                        "Video uploaded " + daysAgo + " days ago (must be < 7 days)", top3Videos);
+                    return;
                 }
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    try {
-                        String body = response.body().string();
-                        JSONArray arr = new JSONArray(body);
-                        if (arr.length() < 2) {
-                            incrementAndCheck();
-                            return;
-                        }
-                        
-                        JSONArray suggestionsArr = arr.getJSONArray(1);
-                        List<RisingQueryAdapter.RisingItem> items = new ArrayList<>();
-                        
-                        int limit = Math.min(10, suggestionsArr.length());
-                        for (int i = 0; i < limit; i++) {
-                            String query = suggestionsArr.getString(i).toLowerCase().trim();
-                            
-                            if (!query.isEmpty() && !query.equals(suggestion)) {
-                                int interest = Math.max(10, 100 - (i * 10));
-                                String percentStr = "+" + Math.max(10, 200 - (i * 20)) + "%";
-                                items.add(new RisingQueryAdapter.RisingItem(query, String.valueOf(interest), percentStr));
-                            }
-                        }
-                        
-                        if (!items.isEmpty()) {
-                            dataMap.put(suggestion, items);
-                            runOnUiThread(() -> updateUI(suggestion));
-                        } else {
-                            incrementAndCheck();
-                        }
-                    } catch (Exception e) {
-                        incrementAndCheck();
-                    }
+                
+                // Check channel subscribers
+                if (video.subscribers >= MAX_SUBSCRIBERS) {
+                    markValidationResult(suggestion, false, 
+                        video.channelName + " has " + video.subscribers + " subscribers (must be < 50K)", top3Videos);
+                    return;
                 }
-            });
+            }
+            
+            // All videos passed validation
+            markValidationResult(suggestion, true, "All 3 videos meet criteria", top3Videos);
+            
+            // Fetch Google Trends rising queries
+            fetchGoogleTrendsRising(suggestion);
+            
         } catch (Exception e) {
-            incrementAndCheck();
+            markValidationResult(suggestion, false, "Validation error: " + e.getMessage(), new ArrayList<>());
         }
     }
 
-    private synchronized void incrementAndCheck() {
-        int completed = completedRequests.incrementAndGet();
-        runOnUiThread(() -> {
-            statusText.setText("🔍 STEP 2: " + completed + "/" + totalRequests + " completed...");
-            
-            if (completed >= totalRequests) {
-                progressBar.setVisibility(View.GONE);
-                int totalQueries = 0;
-                for (List<RisingQueryAdapter.RisingItem> list : dataMap.values()) {
-                    totalQueries += list.size();
+    private List<SuggestionAdapter.VideoInfo> searchYouTube(String query) {
+        List<SuggestionAdapter.VideoInfo> videos = new ArrayList<>();
+        
+        for (String instance : PIPED_INSTANCES) {
+            try {
+                String url = instance + "/search?q=" + URLEncoder.encode(query, "UTF-8") + "&filter=videos";
+                Request request = new Request.Builder().url(url)
+                    .header("User-Agent", "Mozilla/5.0")
+                    .build();
+                
+                Response response = client.newCall(request).execute();
+                if (!response.isSuccessful()) continue;
+                
+                String body = response.body().string();
+                JSONObject json = new JSONObject(body);
+                JSONArray items = json.optJSONArray("items");
+                
+                if (items == null || items.length() < 3) continue;
+                
+                // Get top 3 videos
+                for (int i = 0; i < 3 && i < items.length(); i++) {
+                    JSONObject video = items.getJSONObject(i);
+                    String title = video.optString("title", "");
+                    long views = video.optLong("views", 0);
+                    long uploaded = video.optLong("uploaded", 0);
+                    String uploaderUrl = video.optString("uploaderUrl", "");
+                    String channelName = video.optString("uploader", "");
+                    
+                    // Extract channel ID from uploaderUrl
+                    String channelId = "";
+                    if (uploaderUrl.contains("/channel/")) {
+                        channelId = uploaderUrl.replace("/channel/", "");
+                    }
+                    
+                    // Get channel subscriber count
+                    long subscribers = getChannelSubscribers(instance, channelId);
+                    
+                    videos.add(new SuggestionAdapter.VideoInfo(title, views, uploaded, channelName, subscribers));
                 }
-                statusText.setText("✅ Complete! " + suggestions.size() + " suggestions | " + totalQueries + " related queries");
+                
+                if (videos.size() == 3) break; // Success
+                
+            } catch (Exception e) {
+                // Try next instance
+                continue;
+            }
+        }
+        
+        return videos;
+    }
+
+    private long getChannelSubscribers(String instance, String channelId) {
+        if (channelId.isEmpty()) return 0;
+        
+        try {
+            String url = instance + "/channel/" + channelId;
+            Request request = new Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0")
+                .build();
+            
+            Response response = client.newCall(request).execute();
+            if (!response.isSuccessful()) return 0;
+            
+            String body = response.body().string();
+            JSONObject json = new JSONObject(body);
+            return json.optLong("subscriberCount", 0);
+            
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private void markValidationResult(String suggestion, boolean passed, String message, List<SuggestionAdapter.VideoInfo> videos) {
+        runOnUiThread(() -> {
+            for (SuggestionAdapter.SuggestionItem item : suggestions) {
+                if (item.suggestion.equalsIgnoreCase(suggestion)) {
+                    item.passedValidation = passed;
+                    item.validationMessage = message;
+                    item.checkedVideos.clear();
+                    item.checkedVideos.addAll(videos);
+                    break;
+                }
+            }
+            adapter.notifyDataSetChanged();
+            
+            int completed = validationCompleted.incrementAndGet();
+            statusText.setText("🔍 STEP 2: Validating " + completed + "/" + totalValidations + " suggestions...");
+            
+            if (completed >= totalValidations) {
+                int passedCount = 0;
+                for (SuggestionAdapter.SuggestionItem item : suggestions) {
+                    if (item.passedValidation) passedCount++;
+                }
+                statusText.setText("✅ Validation complete! " + passedCount + "/" + totalValidations + " passed. Fetching Google Trends...");
             }
         });
+    }
+
+    private void fetchGoogleTrendsRising(String suggestion) {
+        try {
+            String jsonPayload = String.format(
+                "{\"comparisonItem\":[{\"keyword\":\"%s\",\"geo\":\"\",\"time\":\"now 7-d\"}],\"category\":0,\"property\":\"youtube\"}",
+                suggestion
+            );
+            String encodedPayload = URLEncoder.encode(jsonPayload, "UTF-8");
+            String trendsUrl = "https://trends.google.com/trends/api/explore?hl=en-US&tz=0&req=" + encodedPayload;
+            
+            String[] proxies = {
+                "https://api.allorigins.win/raw?url=",
+                "https://corsproxy.io/?",
+                "https://api.codetabs.com/v1/proxy/?quest="
+            };
+            
+            for (String proxy : proxies) {
+                try {
+                    String proxyUrl = proxy + URLEncoder.encode(trendsUrl, "UTF-8");
+                    Request request = new Request.Builder().url(proxyUrl)
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build();
+                    
+                    Response response = client.newCall(request).execute();
+                    if (!response.isSuccessful()) continue;
+                    
+                    String body = response.body().string();
+                    if (body.startsWith(")]}'\n")) body = body.substring(5);
+                    
+                    JSONObject root = new JSONObject(body);
+                    JSONObject defaultObj = root.getJSONObject("default");
+                    
+                    if (!defaultObj.has("rankedList")) continue;
+                    
+                    JSONArray rankedList = defaultObj.getJSONArray("rankedList");
+                    if (rankedList.length() <= 1) continue;
+                    
+                    JSONObject risingObj = rankedList.getJSONObject(1);
+                    JSONArray rankedKeywords = risingObj.getJSONArray("rankedKeyword");
+                    
+                    List<RisingQueryAdapter.RisingItem> risingItems = new ArrayList<>();
+                    int limit = Math.min(10, rankedKeywords.length());
+                    
+                    for (int i = 0; i < limit; i++) {
+                        JSONObject kw = rankedKeywords.getJSONObject(i);
+                        String query = kw.getString("query");
+                        String interest = kw.optString("value", "0");
+                        String percent = kw.optString("formattedValue", "+0%");
+                        risingItems.add(new RisingQueryAdapter.RisingItem(query, interest, percent));
+                    }
+                    
+                    if (!risingItems.isEmpty()) {
+                        trendsDataMap.put(suggestion, risingItems);
+                        runOnUiThread(() -> updateUI(suggestion));
+                    }
+                    
+                    break; // Success, no need to try other proxies
+                    
+                } catch (Exception e) {
+                    continue; // Try next proxy
+                }
+            }
+        } catch (Exception e) {
+            // Silent fail
+        }
     }
 
     private void updateUI(String suggestion) {
         for (SuggestionAdapter.SuggestionItem item : suggestions) {
             if (item.suggestion.equalsIgnoreCase(suggestion)) {
-                List<RisingQueryAdapter.RisingItem> items = dataMap.getOrDefault(suggestion, new ArrayList<>());
+                List<RisingQueryAdapter.RisingItem> items = trendsDataMap.getOrDefault(suggestion, new ArrayList<>());
                 item.risingQueries.clear();
                 item.risingQueries.addAll(items);
                 break;
             }
         }
         adapter.notifyDataSetChanged();
-        incrementAndCheck();
     }
 
     @Override
@@ -255,10 +409,18 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         StringBuilder sb = new StringBuilder();
         sb.append("🎯 Keyword: ").append(currentKeyword).append("\n");
         sb.append("🎥 YouTube Suggestion: ").append(item.suggestion).append("\n\n");
-        sb.append("📈 Related Queries:\n");
         
+        sb.append("📊 Video Validation:\n");
+        for (SuggestionAdapter.VideoInfo v : item.checkedVideos) {
+            long daysAgo = (System.currentTimeMillis() - v.uploaded) / (1000 * 60 * 60 * 24);
+            sb.append("• ").append(v.title).append("\n");
+            sb.append("  Views: ").append(v.views).append(" | Days ago: ").append(daysAgo);
+            sb.append(" | Channel: ").append(v.channelName).append(" (").append(v.subscribers).append(" subs)\n");
+        }
+        
+        sb.append("\n📈 Google Trends Rising Queries (Last 7 Days):\n");
         if (item.risingQueries.isEmpty()) {
-            sb.append("(No related queries found)");
+            sb.append("(No rising queries found)");
         } else {
             sb.append("Query\tInterest\tIncrease\n");
             for (RisingQueryAdapter.RisingItem rq : item.risingQueries) {
@@ -282,18 +444,28 @@ public class MainActivity extends AppCompatActivity implements SuggestionAdapter
         for (SuggestionAdapter.SuggestionItem item : suggestions) {
             sb.append("───────────────────────────────────────\n");
             sb.append("🎥 YouTube Suggestion: ").append(item.suggestion).append("\n");
-            sb.append("───────────────────────────────────────\n");
+            sb.append("Status: ").append(item.passedValidation ? "✅ PASSED" : "❌ FAILED").append("\n");
+            sb.append("Reason: ").append(item.validationMessage).append("\n\n");
             
-            if (item.risingQueries.isEmpty()) {
-                sb.append("(No related queries found)\n\n");
-            } else {
-                sb.append("📈 Related Queries:\n");
+            if (!item.checkedVideos.isEmpty()) {
+                sb.append("📊 Videos Checked:\n");
+                for (SuggestionAdapter.VideoInfo v : item.checkedVideos) {
+                    long daysAgo = (System.currentTimeMillis() - v.uploaded) / (1000 * 60 * 60 * 24);
+                    sb.append("• ").append(v.title).append("\n");
+                    sb.append("  Views: ").append(v.views).append(" | Days: ").append(daysAgo);
+                    sb.append(" | ").append(v.channelName).append(" (").append(v.subscribers).append(" subs)\n");
+                }
+                sb.append("\n");
+            }
+            
+            if (item.passedValidation && !item.risingQueries.isEmpty()) {
+                sb.append("📈 Rising Queries:\n");
                 sb.append("Query\tInterest\tIncrease\n");
                 for (RisingQueryAdapter.RisingItem rq : item.risingQueries) {
                     sb.append(rq.query).append("\t").append(rq.interest).append("\t").append(rq.percent).append("\n");
                 }
-                sb.append("\n");
             }
+            sb.append("\n");
         }
         
         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
