@@ -7,7 +7,7 @@
         android:text="🎯 Smart Keyword Finder" android:textSize="20sp" android:textStyle="bold"
         android:textColor="#1a1a1a" android:paddingBottom="4dp"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="YouTube Suggestions → Video Filter (<50K views/subs, <7 days) → Google Trends"
+        android:text="YouTube Suggestions → Video Filter (under 50K views/subs, under 7 days) → Google Trends"
         android:textSize="11sp" android:textColor="#666" android:paddingBottom="8dp"/>
 
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
